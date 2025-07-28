@@ -1,0 +1,189 @@
+"""
+游戏常量配置文件
+包含所有硬编码的数值，便于统一管理和调整
+"""
+
+# ============================= 屏幕坐标和区域 =============================
+
+# 敌方随从血量检测区域 (左上角x, 左上角y, 右下角x, 右下角y)
+ENEMY_HP_REGION = (249, 249, 1015, 310)
+
+# 我方随从检测区域
+OUR_FOLLOWER_REGION = (176, 295, 1064, 421)  # 疾驰/突进随从区域
+OUR_HP_REGION = (263, 420, 1015, 482)  # 我方随从血量区域
+
+# 敌方护盾检测区域 (左上角x, 左上角y, 右下角x, 右下角y)
+ENEMY_SHIELD_REGION = (164, 136, 1096, 228)
+
+# 敌方随从位置偏移
+ENEMY_FOLLOWER_OFFSET_X = -50  # 从血量中心到随从中心的X偏移
+ENEMY_FOLLOWER_OFFSET_Y = -63  # 从血量中心到随从中心的Y偏移
+ENEMY_HP_REGION_OFFSET_X = 249  # 敌方血量区域X偏移
+ENEMY_HP_REGION_OFFSET_Y = 249  # 敌方血量区域Y偏移
+
+# 我方随从位置调整
+OUR_FOLLOWER_Y_ADJUST = 399  # 我方随从Y坐标基准
+OUR_FOLLOWER_Y_RANDOM = 2    # Y坐标随机偏移范围
+ENEMY_FOLLOWER_Y_ADJUST = 228  # 敌方随从Y坐标基准
+ENEMY_FOLLOWER_Y_RANDOM = 5    # Y坐标随机偏移范围
+
+# 默认攻击目标位置（敌方玩家）
+DEFAULT_ATTACK_TARGET = (646, 64)
+DEFAULT_ATTACK_RANDOM = 3  # 随机偏移范围
+
+# 展牌按钮位置
+SHOW_CARDS_BUTTON = (914, 669)
+SHOW_CARDS_RANDOM_X = (-3, 2)  # X轴随机偏移范围
+SHOW_CARDS_RANDOM_Y = (-4, 5)   # Y轴随机偏移范围
+
+# 空白处点击位置（关闭面板）
+BLANK_CLICK_POSITION = (27, 513)
+BLANK_CLICK_RANDOM = 3  # 随机偏移范围
+
+# OCR识别区域大小
+OCR_CROP_SIZE = 45  # 用于血量识别的裁剪区域大小
+OCR_CROP_HALF_SIZE = OCR_CROP_SIZE // 2  # 裁剪区域的一半大小
+
+# ============================= HSV颜色范围 =============================
+
+# 敌方随从血量颜色（红色）
+ENEMY_HP_HSV = {
+    "red": [0, 111, 0, 7, 207, 255]
+}
+
+# 我方随从状态颜色
+OUR_FOLLOWER_HSV = {
+    "yellow1": [20, 133, 21, 26, 245, 255],  # 第一个黄色范围,小的
+    "yellow2": [20, 56, 22, 29, 175, 255],   # 第二个黄色范围(匹配超进化的大框)
+    "green": [32, 86, 62, 82, 255, 255],     # 绿色光框（可攻击敌方玩家或随从）
+    "green2": [30, 60, 80, 90, 200, 255],    # 第二个绿色范围(匹配黏在一起的超进化疾驰)
+    "blue": [87, 124, 84, 120, 255, 255],    # 蓝色血量
+}
+
+# ============================= 轮廓检测参数 =============================
+
+# 敌方随从轮廓检测
+ENEMY_CONTOUR_MIN_DIM = 15      # 最小尺寸
+ENEMY_CONTOUR_MIN_AREA = 300    # 最小面积
+ENEMY_CONTOUR_MAX_AREA = 5000   # 最大面积
+
+# 我方随从轮廓检测
+OUR_CONTOUR_MIN_DIM = 100       # 最小尺寸
+OUR_CONTOUR_MAX_DIM = 300       # 最大尺寸
+OUR_CONTOUR_MIN_AREA = 1000     # 最小面积
+
+# 血量轮廓检测
+HP_CONTOUR_MIN_DIM = 100        # 最小尺寸
+HP_CONTOUR_MAX_DIM = 300        # 最大尺寸
+HP_CONTOUR_MIN_AREA = 1200      # 最小面积
+
+# 形态学操作核大小
+MORPHOLOGY_KERNEL_SIZE = 4
+
+# ============================= 费用识别参数 =============================
+
+# 费用识别相关常量
+COST_CONFIDENCE_THRESHOLD = 0.6  # 费用识别的置信度阈值
+COST_MIN = 1                     # 最小费用
+COST_MAX = 10                    # 最大费用
+COST_DIGIT_HEIGHT = 27           # 费用数字高度
+COST_DIGIT_WIDTH = 20            # 费用数字宽度
+
+# 费用识别失败时的默认值
+DEFAULT_HP_VALUE = "99"  # OCR识别失败时的默认血量值
+
+# ============================= 图像处理参数 =============================
+
+# 边缘检测阈值
+EDGE_THRESHOLDS = (50, 200)
+
+# 金字塔层数
+PYRAMID_LEVELS = 2
+
+# 角度匹配参数
+ANGLE_RANGE = 30        # 角度搜索范围
+ANGLE_STEPS = [5.0, 1.0, 0.2]  # 三级角度扫描步长
+
+# 模板匹配阈值
+TEMPLATE_MATCH_THRESHOLD = 0.85
+
+# ============================= 调试参数 =============================
+
+# 调试绘制参数
+DEBUG_CIRCLE_RADIUS = 5
+DEBUG_LINE_THICKNESS = 2
+DEBUG_TEXT_SCALE = 0.5
+DEBUG_TEXT_THICKNESS = 1
+
+# 调试颜色 (BGR格式)
+DEBUG_COLORS = {
+    "green": (0, 255, 0),
+    "red": (0, 0, 255),
+    "blue": (255, 0, 0),
+    "yellow": (0, 255, 255),
+    "cyan": (255, 255, 0)
+}
+
+# ============================= 游戏逻辑参数 =============================
+
+# 手牌区域参数
+HAND_AREA_ROI = {
+    "x1": 291,
+    "y1": 602,
+    "x2": 815,
+    "y2": 430
+}
+
+# 护盾检测参数
+SHIELD_DETECTION_TIMEOUT = 1.0  # 护盾检测超时时间
+
+# 随机偏移范围
+POSITION_RANDOM_RANGE = {
+    "small": 2,    # 小范围随机偏移
+    "medium": 3,   # 中等范围随机偏移
+    "large": 5     # 大范围随机偏移
+}
+
+# ============================= 分辨率相关参数 =============================
+
+# 720p分辨率参数
+RESOLUTION_720P = {
+    "width": 1280,
+    "height": 720,
+    "scale_factor": 1.0
+}
+
+# 1080p分辨率参数
+RESOLUTION_1080P = {
+    "width": 1920,
+    "height": 1080,
+    "scale_factor": 1.5
+}
+
+# ============================= 时间参数 =============================
+
+# 各种超时时间（秒）
+TIMEOUTS = {
+    "shield_detection": 1.0,    # 护盾检测超时
+    "template_match": 0.5,      # 模板匹配超时
+    "action_delay": 0.1,        # 动作间隔延迟
+    "screenshot_delay": 0.05,   # 截图延迟
+}
+
+# ============================= 文件路径 =============================
+
+# 模板文件路径
+TEMPLATE_PATHS = {
+    "cost_numbers": "templates/cost_numbers",
+    "digits": "templates/digits",
+    "cost_numbers_all": "templates/cost_numbers/all",
+    "cost_numbers_backup": "templates/cost_numbers/backup",
+    "cost_numbers_circle": "templates/cost_numbers/circle",
+    "digits_backup": "templates/digits/backup"
+}
+
+# 调试文件路径
+DEBUG_PATHS = {
+    "debug_dir": "debug",
+    "debug_cost_dir": "debug_cost"
+} 
