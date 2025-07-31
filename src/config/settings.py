@@ -43,13 +43,12 @@ DEFAULT_CONFIG = {
     "auto_restart": {
         "enabled": True,
         "output_timeout": 300,  # 5分钟无输出超时（秒）
-        "match_timeout": 900    # 15分钟无新战斗超时（秒）
+        "match_timeout": 1200    # 20分钟无新战斗超时（秒）
     },
     "devices": [
         {
             "name": "MuMu模拟器",
-            "serial": "127.0.0.1:16384",
-            "port": 16384
+            "serial": "127.0.0.1:16384"
         }
     ],
     "game": {
@@ -78,7 +77,7 @@ DEFAULT_CONFIG = {
 
 # ============================= 拖动相关配置 =============================
 # 拖动总时间区间（秒），全局统一，(最小值, 最大值)
-HUMAN_LIKE_DRAG_DURATION_RANGE_DEFAULT = (0.11, 0.15)
+HUMAN_LIKE_DRAG_DURATION_RANGE_DEFAULT = (0.15, 0.20)
 
 def get_human_like_drag_duration_range():
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'config.json')
