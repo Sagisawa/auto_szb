@@ -1,0 +1,30 @@
+{
+  "adb_port": 5037,
+  "devices": [
+    {
+      "name": "MuMu模拟器",
+      "serial": "127.0.0.1:16384"
+    }
+  ],
+  "game": {
+    "human_like_drag_duration_range": [0.10, 0.13]
+  },
+  "change_card_cost_threshold": 3,
+  "high_priority_cards": {
+    "蛇神之怒": {"priority": 3},
+    "无极猎人阿拉加维": {"priority": 2},
+    "命运黄昏奥丁": {"priority": 4},
+    "鸣咽的圣骑士维尔伯特": {"priority": 2},
+    "纯白圣女贞德": {"priority": 1},
+    "夭之守护神埃忒耳": {"priority": 1},
+    "怨灵": {"priority": 3},
+    "水之守护神萨蕾法": {"priority": 3},
+    "诅咒派对": {"priority": 1}
+  },
+  "evolve_priority_cards": {
+    "鸣咽的圣骑士维尔伯特": {"priority": 2},
+    "夭之守护神埃忒耳": {"priority": 1},
+    "无极猎人阿拉加维": {"priority": 3},
+    "水之守护神萨蕾法": {"priority": 3}
+  }
+}

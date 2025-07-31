@@ -83,8 +83,11 @@ class SiftCardRecognition:
                             new_width = int(width * self.scale_factor)
                             scaled_template = cv2.resize(template, (new_width, new_height))
                             
+                            # 转换为灰度图像进行SIFT特征提取
+                            scaled_template_gray = cv2.cvtColor(scaled_template, cv2.COLOR_BGR2GRAY)
+                            
                             # 计算SIFT特征
-                            keypoints, descriptors = self.sift.detectAndCompute(scaled_template, None)
+                            keypoints, descriptors = self.sift.detectAndCompute(scaled_template_gray, None)
                             
                             if descriptors is not None:
                                 self.card_templates[name_without_ext] = {
@@ -122,7 +125,10 @@ class SiftCardRecognition:
                 image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             x1, y1, x2, y2 = self.hand_area
             hand_region = image[y1:y2, x1:x2]
-            hand_keypoints, hand_descriptors = self.sift.detectAndCompute(hand_region, None)
+            
+            # 转换为灰度图像进行SIFT特征提取
+            hand_region_gray = cv2.cvtColor(hand_region, cv2.COLOR_BGR2GRAY)
+            hand_keypoints, hand_descriptors = self.sift.detectAndCompute(hand_region_gray, None)
             if hand_descriptors is None:
                 logger.warning("手牌区域未检测到SIFT特征")
                 return []
