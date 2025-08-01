@@ -17,7 +17,7 @@ ENEMY_SHIELD_REGION = (164, 136, 1096, 228)
 
 # 敌方随从位置偏移
 ENEMY_FOLLOWER_OFFSET_X = -50  # 从血量中心到随从中心的X偏移
-ENEMY_FOLLOWER_OFFSET_Y = -63  # 从血量中心到随从中心的Y偏移
+ENEMY_FOLLOWER_OFFSET_Y = -70  # 从血量中心到随从中心的Y偏移
 ENEMY_HP_REGION_OFFSET_X = 249  # 敌方血量区域X偏移
 ENEMY_HP_REGION_OFFSET_Y = 249  # 敌方血量区域Y偏移
 
@@ -198,12 +198,6 @@ RESOLUTION_720P = {
     "scale_factor": 1.0
 }
 
-# 1080p分辨率参数
-RESOLUTION_1080P = {
-    "width": 1920,
-    "height": 1080,
-    "scale_factor": 1.5
-}
 
 # ============================= 时间参数 =============================
 
