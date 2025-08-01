@@ -22,7 +22,6 @@ from src.config import ConfigManager
 from src.utils import setup_gpu, display_disclaimer_and_get_consent
 from src.device import DeviceManager
 from src.ui import NotificationManager
-from src.utils.gpu_utils import get_easyocr_reader
 
 
 def setup_logging(config: Dict[str, Any]) -> logging.Logger:
@@ -107,14 +106,6 @@ def main():
             print("配置验证失败，请检查配置文件")
             return
         
-        # 重新加载卡牌优先级配置（确保PyInstaller打包后能正确读取）
-        try:
-            from src.config.card_priorities import reload_config
-            reload_config()
-            print("卡牌优先级配置重新加载完成")
-        except Exception as e:
-            print(f"重新加载卡牌优先级配置失败: {e}")
-        
         # 设置日志系统
         logger = setup_logging(config_manager.config)
         logger.info("=== 影之诗自动对战脚本启动 ===")
@@ -130,13 +121,6 @@ def main():
             logger.info("OCR识别GPU加速已启用")
         else:
             logger.info("OCR识别使用CPU模式")
-
-        # 全局初始化OCR reader，确保子线程只用全局实例
-        ocr_reader = get_easyocr_reader(gpu_enabled=gpu_enabled)
-        if ocr_reader is not None:
-            logger.info("全局OCR reader初始化成功")
-        else:
-            logger.warning("全局OCR reader初始化失败，后续OCR功能不可用")
         
         # 初始化通知管理器
         notification_manager = NotificationManager()

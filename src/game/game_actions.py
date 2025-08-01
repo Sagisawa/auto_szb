@@ -10,6 +10,7 @@ import random
 import time
 import logging
 import os
+from src.game.cost_recognition import CostRecognition
 from src.config import settings
 from src.config.game_constants import (
     DEFAULT_ATTACK_TARGET, DEFAULT_ATTACK_RANDOM,
@@ -17,9 +18,8 @@ from src.config.game_constants import (
     BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
 )
 import math
-from src.config.card_priorities import get_card_priority, is_evolve_priority_card, get_evolve_priority_cards, is_evolve_special_action_card, get_evolve_special_actions
+from src.config.card_priorities import is_evolve_priority_card
 from src.config.config_manager import ConfigManager
-import glob
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,7 @@ class GameActions:
     
     def __init__(self, device_state):
         self.device_state = device_state
+        self.cost_recognition = CostRecognition()
         # 初始化手牌管理器，只创建一次
         from .hand_card_manager import HandCardManager
         self.hand_manager = HandCardManager(device_state)
@@ -45,7 +46,7 @@ class GameActions:
             "green": "疾驰"
         }
 
-        # 对面玩家位置（默认攻击目标）
+        # 对面主人位置（默认攻击目标）
         default_target = (
             DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM),
             DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
@@ -64,12 +65,8 @@ class GameActions:
 
         if shield_detected:
             shield_queue = shield_targets.copy()
-            max_attempts = 5  # 最多循环5次
-            attempt_count = 0
 
-            while shield_queue and attempt_count < max_attempts:
-                attempt_count += 1
-                self.device_state.logger.info(f"破盾尝试第{attempt_count}/5次")
+            while shield_queue:
                 current_shield = shield_queue[0]
                 shield_x, shield_y = current_shield
 
@@ -95,7 +92,7 @@ class GameActions:
                         else:
                             self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
                         human_like_drag(self.device_state.u2_device, closest_follower[0], closest_follower[1], shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                        time.sleep(1)
+                        time.sleep(3)
                         break  # 已攻击则跳出类型循环
 
                 if not closest_follower:
@@ -130,10 +127,6 @@ class GameActions:
                     ]
 
                 time.sleep(0.2)
-            
-            # 检查是否因为达到最大尝试次数而退出循环
-            if attempt_count >= max_attempts and shield_queue:
-                self.device_state.logger.warning(f"达到最大破盾尝试次数({max_attempts}次)，停止破盾操作")
 
         # 没有护盾，使用绿色随从攻击敌方主人
         green_followers = [(x, y, name) for x, y, t, name in all_followers if t == "green"]
@@ -145,7 +138,7 @@ class GameActions:
                     self.device_state.logger.info("使用疾驰随从攻击敌方玩家")
                 target_x, target_y = default_target
                 human_like_drag(self.device_state.u2_device, x, y, target_x, target_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                time.sleep(0.45)
+                time.sleep(0.32)
 
         # 使用黄色突进随从攻击敌方血量最小的随从
         if not shield_detected:
@@ -164,7 +157,7 @@ class GameActions:
                                 else:
                                     self.device_state.logger.info("使用突进随从攻击敌方血量较小的随从")
                                 human_like_drag(self.device_state.u2_device, x, y, enemy_x, enemy_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                                time.sleep(0.45)
+                                time.sleep(0.32)
                     except Exception as e:
                         self.device_state.logger.warning(f"突进敌方最小血量随从失败: {str(e)}")
 
@@ -175,7 +168,7 @@ class GameActions:
             self.device_state.logger.info("没有随从可进化")
             return
 
-        from src.config.card_priorities import is_evolve_priority_card, get_evolve_priority_cards, is_evolve_special_action_card, get_evolve_special_actions
+        from src.config.card_priorities import is_evolve_priority_card, get_evolve_priority_cards
         evolve_priority_cards_cfg = get_evolve_priority_cards()
         # 先筛选进化优先卡牌
         evolve_priority_followers = []
@@ -251,9 +244,6 @@ class GameActions:
                         self.device_state.logger.info(f"检测到超进化按钮并点击")
                     time.sleep(3.5)
 
-                    # 特殊超进化后操作（如铁拳神父）
-                    if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=True, existing_followers=all_followers)
                     # 如果超进化到突进或者普通随从，则再检查无护盾后攻击敌方随从
                     if follower_type in ["yellow", "normal"]:
                         # 等待超进化动画完成
@@ -303,26 +293,9 @@ class GameActions:
                         self.device_state.logger.info(f"检测到进化按钮并点击，进化了[{follower_name}]")
                     else:
                         self.device_state.logger.info(f"检测到进化按钮并点击")
-                    time.sleep(3.5)
-
-                    # 特殊进化后操作（如铁拳神父）
-                    if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=False, existing_followers=all_followers)
                 break
             time.sleep(0.01)
         time.sleep(2)  # 短暂等待
-
-    def _handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False, existing_followers=None):
-        """
-        处理进化/超进化后特殊action（如铁拳神父等），便于扩展
-        follower_name: 卡牌名称
-        pos: 进化随从的坐标（如有需要）
-        is_super_evolution: 是否为超进化
-        existing_followers: 已扫描的随从结果，避免重复扫描
-        """
-        from .evolution_special_actions import EvolutionSpecialActions
-        evolution_actions = EvolutionSpecialActions(self.device_state)
-        evolution_actions.handle_evolve_special_action(follower_name, pos, is_super_evolution, existing_followers)
 
     def perform_full_actions(self):
         """720P分辨率下的出牌攻击操作"""
@@ -331,8 +304,6 @@ class GameActions:
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
-        #移除手牌光标提高识别率
-        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
         time.sleep(0.3)
         
         # 获取截图
@@ -342,18 +313,9 @@ class GameActions:
         
         # 执行出牌逻辑
         self._play_cards(image)
-        time.sleep(1)
+        time.sleep(2)
 
-        # 点击绝对无遮挡处关闭可能扰乱识别的面板
-        from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
-        self.device_state.u2_device.click(
-            BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
-            BLANK_CLICK_POSITION[1] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM)
-        )
-        time.sleep(1.5)
 
-        # from src.game.game_manager import GameManager
-        # GameManager(self.device_state).scan_enemy_HP()
 
         # 获取随从位置
         screenshot = self.device_state.take_screenshot()
@@ -367,8 +329,6 @@ class GameActions:
 
         if green_or_yellow_followers:
             self.perform_follower_attacks()
-            # from src.game.game_manager import GameManager
-            # GameManager(self.device_state).scan_enemy_HP()
         else:
             self.device_state.logger.info("未检测到可进行攻击的随从，跳过攻击操作")
 
@@ -381,9 +341,6 @@ class GameActions:
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
-        time.sleep(0.2)
-        #移除手牌光标提高识别率
-        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
         time.sleep(0.3)
 
         # 获取截图
@@ -398,15 +355,8 @@ class GameActions:
 
         # 执行出牌逻辑
         self._play_cards(image)
-        time.sleep(1)
+        time.sleep(2)
 
-        # # 点击绝对无遮挡处关闭可能扰乱识别的面板
-        from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
-        self.device_state.u2_device.click(
-            BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
-            BLANK_CLICK_POSITION[1] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM)
-        )
-        time.sleep(1.5)
 
         # 获取随从位置和类型
         screenshot = self.device_state.take_screenshot()
@@ -414,12 +364,11 @@ class GameActions:
             our_followers_positions = self._scan_our_followers(screenshot)
             self.follower_manager.update_positions(our_followers_positions)
 
-        # 执行进化操作
+        # 执行进化操作（不管类型，全部尝试进化）
         self.perform_evolution_actions()
 
         # 等待最终进化/超进化动画完成
         time.sleep(3)
-        # 点击空白处关闭面板
         from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
         self.device_state.u2_device.click(
             BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
@@ -485,20 +434,15 @@ class GameActions:
         current_round = self.device_state.current_round_count
         available_cost = min(10, current_round)  # 基础费用 = 当前回合数（最大10）
         
-        # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
-        if self.hand_manager.recognize_hand_shield_card():
-            self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-            return
-        
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:
             extra_point = self._detect_extra_cost_point(image)
             if extra_point:
                 self.device_state.extra_cost_available_this_match = True
-                self.device_state.logger.info("本局为后手，有额外费用点")
+                self.device_state.logger.info("本局检测到额外费用点功能")
             else:
                 self.device_state.extra_cost_available_this_match = False
-                self.device_state.logger.info("本局为先手，没有额外费用点")
+                self.device_state.logger.info("本局没有额外费用点功能")
         
         # 检测额外费用点（1-5回合可用一次，6回合后可用一次，且本局有额外费用点功能）
         if self.device_state.extra_cost_available_this_match:
@@ -608,42 +552,23 @@ class GameActions:
         while planned_cards and (remain_cost > 0 or any(c.get('cost', 0) == 0 for c in planned_cards)):
             # 先找能出的高优先级卡牌
             affordable_priority = [c for c in planned_cards if c.get('name', '') in high_priority_names and c.get('cost', 0) <= remain_cost]
-            # 找普通0费卡牌
-            normal_zero_cost = [c for c in planned_cards if c.get('name', '') not in high_priority_names and c.get('cost', 0) == 0]
-            # 找能出的普通付费卡牌
-            affordable_normal = [c for c in planned_cards if c.get('name', '') not in high_priority_names and c.get('cost', 0) > 0 and c.get('cost', 0) <= remain_cost]
-            
-            if not affordable_priority and not normal_zero_cost and not affordable_normal:
+            affordable_normal = [c for c in planned_cards if c.get('name', '') not in high_priority_names and c.get('cost', 0) <= remain_cost]
+            zero_cost = [c for c in planned_cards if c.get('cost', 0) == 0]
+            if not affordable_priority and not affordable_normal and not zero_cost:
                 break
-                
             if affordable_priority:
-                # 高优先级卡牌按priority和费用排序（priority小优先，费用高优先）
-                affordable_priority.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
+                affordable_priority.sort(key=lambda x: x.get('cost', 0), reverse=True)
                 card_to_play = affordable_priority[0]
                 self.device_state.logger.info(f"检测到高优先级卡牌[{card_to_play.get('name', '未知')}]，优先打出")
-            elif normal_zero_cost:
-                # 普通0费卡牌优先于普通付费卡牌
-                card_to_play = normal_zero_cost[0]
-                self.device_state.logger.info(f"检测到普通0费卡牌[{card_to_play.get('name', '未知')}]，优先打出")
             elif affordable_normal:
-                # 普通付费卡牌按费用从高到低排序（高费优先）
                 affordable_normal.sort(key=lambda x: x.get('cost', 0), reverse=True)
                 card_to_play = affordable_normal[0]
+            else:
+                card_to_play = zero_cost[0]
             name = card_to_play.get('name', '未知')
             cost = card_to_play.get('cost', 0)
             self.device_state.logger.info(f"打出卡牌: {name} (费用: {cost})")
             self._play_single_card(card_to_play)
-            
-            # 处理额外的费用奖励
-            extra_cost_bonus = getattr(self, '_current_extra_cost_bonus', 0)
-            if extra_cost_bonus > 0:
-                remain_cost += extra_cost_bonus
-                self.device_state.logger.info(f"获得额外费用奖励，剩余费用增加至: {remain_cost}")
-                # 清除额外费用奖励，避免重复使用
-                self._current_extra_cost_bonus = 0
-            
-            # 记录最后打出的卡牌名称，用于特殊逻辑判断
-            self._last_played_card = name
             if cost > 0:
                 remain_cost -= cost
                 total_cost_used += cost
@@ -652,10 +577,7 @@ class GameActions:
                 time.sleep(0.2)
                 #点击展牌位置
                 self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-                time.sleep(0.2)
-                #移除手牌光标提高识别率
-                self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-                time.sleep(1)
+                time.sleep(0.3)
                 new_cards = hand_manager.get_hand_cards_with_retry(max_retries=2, silent=True)
                 if new_cards:
                     card_info = []
@@ -665,18 +587,9 @@ class GameActions:
                         center = card.get('center', (0, 0))
                         card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
                     self.device_state.logger.info(f"出牌后更新手牌状态与位置: {' | '.join(card_info)}")
-                    
-                    # 修正：重建planned_cards时包含所有新检测到的卡牌，而不仅仅是初始计划中的卡牌
-                    # 这样可以处理新抽到的卡牌（如0费卡牌）
-                    planned_cards = new_cards
-                    
-                    # 重新应用优先级排序
-                    high_priority_names = set(high_priority_cards_cfg.keys())
-                    priority_cards = [c for c in planned_cards if c.get('name', '') in high_priority_names]
-                    normal_cards = [c for c in planned_cards if c.get('name', '') not in high_priority_names]
-                    priority_cards.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
-                    normal_cards.sort(key=lambda x: x.get('cost', 0), reverse=True)
-                    planned_cards = priority_cards + normal_cards
+                    # 修正：用新识别的卡牌对象重建planned_cards，保证center等信息是最新的
+                    planned_cards_key_set = set((c.get('name', ''), c.get('cost', 0)) for c in planned_cards)
+                    planned_cards = [c for c in new_cards if (c.get('name', ''), c.get('cost', 0)) in planned_cards_key_set]
                 if not new_cards:
                     if retry_count < max_retry_attempts:
                         self.device_state.logger.info(f"检测不到手牌，重新识别 ({retry_count + 1}/2)")
@@ -688,167 +601,96 @@ class GameActions:
                 if not planned_cards or (not any(c.get('cost', 0) <= remain_cost for c in planned_cards) and not any(c.get('cost', 0) == 0 for c in planned_cards)):
                     break
 
-        # 特殊逻辑：如果最后打出的是"诅咒派对"且费用用完，再扫描一次手牌
-        if (total_cost_used == available_cost and 
-            hasattr(self, '_last_played_card') and 
-            self._last_played_card == "诅咒派对"):
-            
-            extra_cost = self._extra_scan_after_add_newcards(hand_manager, high_priority_cards_cfg,self._last_played_card)
-            total_cost_used += extra_cost  # 添加额外扫描打出的费用
-
         if not hasattr(self.device_state, 'cost_history'):
             self.device_state.cost_history = []
         self.device_state.cost_history.append(total_cost_used)
         self.device_state.logger.info(f"本回合出牌完成，消耗{total_cost_used}费 (可用费用: {available_cost})")
 
-    def _extra_scan_after_add_newcards(self, hand_manager, high_priority_cards_cfg,last_played_card):
-        """用完费用后的额外扫描逻辑"""
-        self.device_state.logger.info(f"检测到打出{last_played_card}用完费用，额外扫描一次手牌")
-        time.sleep(0.2)
-        # 点击展牌位置
-        self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-        time.sleep(0.2)
-        #移除手牌光标提高识别率
-        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-        time.sleep(1)
-        
-        new_cards = hand_manager.get_hand_cards_with_retry(max_retries=2, silent=True)
-        if new_cards:
-            card_info = []
-            for card in new_cards:
-                name = card.get('name', '未知')
-                cost = card.get('cost', 0)
-                center = card.get('center', (0, 0))
-                card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
-            self.device_state.logger.info(f"额外扫描手牌状态: {' | '.join(card_info)}")
-            
-            # 查找0费卡牌
-            zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
-            if zero_cost_cards:
-                # 按优先级排序0费卡牌
-                high_priority_names = set(high_priority_cards_cfg.keys())
-                priority_zero = [c for c in zero_cost_cards if c.get('name', '') in high_priority_names]
-                normal_zero = [c for c in zero_cost_cards if c.get('name', '') not in high_priority_names]
-                priority_zero.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
-                normal_zero.sort(key=lambda x: x.get('cost', 0), reverse=True)
-                sorted_zero_cards = priority_zero + normal_zero
-                
-                # 打出第一个0费卡牌
-                card_to_play = sorted_zero_cards[0]
-                name = card_to_play.get('name', '未知')
-                cost = card_to_play.get('cost', 0)
-                self.device_state.logger.info(f"额外扫描发现0费卡牌，打出: {name} (费用: {cost})")
-                self._play_single_card(card_to_play)
-                # 记录最后打出的卡牌名称
-                self._last_played_card = name
-                return cost  # 返回打出的费用
-            else:
-                self.device_state.logger.info("额外扫描未发现0费卡牌，进行第二次扫描")
-                # 第二次扫描
-                time.sleep(0.5)
-                # 再次点击展牌位置
-                self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-                time.sleep(0.2)
-                #移除手牌光标提高识别率
-                self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-                time.sleep(1)
-                
-                new_cards = hand_manager.get_hand_cards_with_retry(max_retries=3, silent=True)
-                if new_cards:
-                    card_info = []
-                    for card in new_cards:
-                        name = card.get('name', '未知')
-                        cost = card.get('cost', 0)
-                        center = card.get('center', (0, 0))
-                        card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
-                    self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
-                    
-                    # 查找0费卡牌
-                    zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
-                    if zero_cost_cards:
-                        # 按优先级排序0费卡牌
-                        high_priority_names = set(high_priority_cards_cfg.keys())
-                        priority_zero = [c for c in zero_cost_cards if c.get('name', '') in high_priority_names]
-                        normal_zero = [c for c in zero_cost_cards if c.get('name', '') not in high_priority_names]
-                        priority_zero.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
-                        normal_zero.sort(key=lambda x: x.get('cost', 0), reverse=True)
-                        sorted_zero_cards = priority_zero + normal_zero
-                        
-                        # 打出第一个0费卡牌
-                        card_to_play = sorted_zero_cards[0]
-                        name = card_to_play.get('name', '未知')
-                        cost = card_to_play.get('cost', 0)
-                        self.device_state.logger.info(f"第二次额外扫描发现0费卡牌，打出: {name} (费用: {cost})")
-                        self._play_single_card(card_to_play)
-                        # 记录最后打出的卡牌名称
-                        self._last_played_card = name
-                        return cost  # 返回打出的费用
-                    else:
-                        self.device_state.logger.info("第二次额外扫描仍未发现0费卡牌")
-                else:
-                    self.device_state.logger.info("第二次额外扫描仍未检测到手牌")
-        else:
-            self.device_state.logger.info("额外扫描未检测到手牌，进行第二次扫描")
-            # 第二次扫描
-            time.sleep(0.2)
-            # 再次点击展牌位置
-            self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-            time.sleep(0.2)
-            #移除手牌光标提高识别率
-            self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-            time.sleep(1.5)
-            
-            new_cards = hand_manager.get_hand_cards_with_retry(max_retries=3, silent=True)
-            if new_cards:
-                card_info = []
-                for card in new_cards:
-                    name = card.get('name', '未知')
-                    cost = card.get('cost', 0)
-                    center = card.get('center', (0, 0))
-                    card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
-                self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
-                
-                # 查找0费卡牌
-                zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
-                if zero_cost_cards:
-                    # 按优先级排序0费卡牌
-                    high_priority_names = set(high_priority_cards_cfg.keys())
-                    priority_zero = [c for c in zero_cost_cards if c.get('name', '') in high_priority_names]
-                    normal_zero = [c for c in zero_cost_cards if c.get('name', '') not in high_priority_names]
-                    priority_zero.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
-                    normal_zero.sort(key=lambda x: x.get('cost', 0), reverse=True)
-                    sorted_zero_cards = priority_zero + normal_zero
-                    
-                    # 打出第一个0费卡牌
-                    card_to_play = sorted_zero_cards[0]
-                    name = card_to_play.get('name', '未知')
-                    cost = card_to_play.get('cost', 0)
-                    self.device_state.logger.info(f"第二次额外扫描发现0费卡牌，打出: {name} (费用: {cost})")
-                    self._play_single_card(card_to_play)
-                    # 记录最后打出的卡牌名称
-                    self._last_played_card = name
-                    return cost  # 返回打出的费用
-                else:
-                    self.device_state.logger.info("第二次额外扫描仍未发现0费卡牌")
-            else:
-                self.device_state.logger.info("第二次额外扫描仍未检测到手牌")
-        
-        return 0  # 没有打出卡牌，返回0
-
     def _play_single_card(self, card):
-        """打出单张牌"""
-        from .card_play_special_actions import CardPlaySpecialActions
-        card_play_actions = CardPlaySpecialActions(self.device_state)
-        result = card_play_actions.play_single_card(card)
+        """打出单张牌（适配green/yellow/normal类型）"""
+        cost = card.get('cost', 0)
+        center_x, center_y = card['center']
+        target_x = center_x + 40
+        card_name = card.get('name', '')
         
-        # 处理额外的费用奖励
-        extra_cost_bonus = getattr(card_play_actions, '_extra_cost_bonus', 0)
-        if extra_cost_bonus > 0:
-            self.device_state.logger.info(f"获得额外费用: +{extra_cost_bonus}")
-            # 将额外费用奖励存储到实例变量中，供调用方使用
-            self._current_extra_cost_bonus = extra_cost_bonus
+        # 导入特殊卡牌配置
+        from src.config.card_priorities import get_special_cards, get_high_priority_cards
+        special_cards = get_special_cards()
+        high_priority_names = set(get_high_priority_cards().keys())
         
-        return result
+        # 检查是否为特殊处理卡牌
+        if card_name in special_cards:
+            special_info = special_cards[card_name]
+            target_type = special_info.get('target_type', '')
+            
+            if target_type == 'enemy_player':
+                # 蛇神之怒类型：选择敌方玩家目标
+                self.device_state.logger.info(f"检测到{card_name}，划出卡牌后选择敌方玩家目标")
+                # 划出卡牌
+                human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x, 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+                time.sleep(0.7)  # 等待
+                
+                from src.config.game_constants import DEFAULT_ATTACK_TARGET, DEFAULT_ATTACK_RANDOM
+                enemy_x = DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+                enemy_y = DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+                self.device_state.u2_device.click(enemy_x, enemy_y)
+                self.device_state.logger.info(f"{card_name}选择敌方玩家目标: ({enemy_x}, {enemy_y})")
+                time.sleep(0.1)  # 等待0.1秒
+                
+            elif target_type == 'shield_or_highest_hp':
+                # 奥丁类型：优先破坏护盾，否则选择血量最高的敌方随从
+                self.device_state.logger.info(f"检测到{card_name}，先检测护盾情况")
+                # 检测护盾
+                shield_targets = self._scan_shield_targets()
+                shield_detected = bool(shield_targets)
+                
+                if shield_detected:
+                    self.device_state.logger.info("检测到护盾，划出卡牌后破坏护盾随从")
+                    # 划出卡牌
+                    human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+                    time.sleep(0.5)  # 等待
+                    
+                    # 点击护盾随从（选择第一个护盾）
+                    shield_x, shield_y = shield_targets[0]
+                    self.device_state.u2_device.click(shield_x, shield_y)
+                    self.device_state.logger.info(f"点击护盾随从位置: ({shield_x}, {shield_y})")
+                else:
+                    self.device_state.logger.info("未检测到护盾，划出卡牌后破坏血量最高的敌方随从")
+                    # 划出卡牌
+                    human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+                    time.sleep(0.2)  # 等待0.2秒
+                    
+                    # 检测敌方随从
+                    screenshot = self.device_state.take_screenshot()
+                    if screenshot:
+                        enemy_followers = self._scan_enemy_followers(screenshot)
+                        if enemy_followers:
+                            # 找出血量最高的随从
+                            try:
+                                max_hp_follower = max(enemy_followers, key=lambda x: int(x[3]) if x[3].isdigit() else 0)
+                                enemy_x, enemy_y, _, _ = max_hp_follower
+                                enemy_x = int(enemy_x)
+                                enemy_y = int(enemy_y)
+                                self.device_state.u2_device.click(enemy_x, enemy_y)
+                                self.device_state.logger.info(f"点击血量最高的敌方随从位置: ({enemy_x}, {enemy_y})")
+                            except Exception as e:
+                                self.device_state.logger.warning(f"选择敌方随从时出错: {str(e)}")
+                        else:
+                            self.device_state.logger.info("未检测到敌方随从")
+                time.sleep(2.7)
+            else:
+                # 其他特殊卡牌，使用默认处理
+                human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+        else:
+            # 普通卡牌，正常打出
+            human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+        
+        # 如果是高优先级卡牌，多等一会
+        if card_name in high_priority_names:
+            time.sleep(1)
+        
+        time.sleep(0.5)
+        return True
 
 
 
@@ -888,10 +730,10 @@ class GameActions:
             return None
 
     def _detect_change_card(self, debug_flag=False):
-        """换牌阶段检测高费卡并换牌 - 绿色费用区域模板+SSIM匹配"""
+        """换牌阶段检测高费卡并换牌 - 绿色费用区域模板+OCR识别"""
+        self.device_state.logger.info("开始执行换牌检测")
         try:
-            screenshot = self.device_state.take_screenshot()
-            #screenshot = self.device_state.u2_device.screenshot()
+            screenshot = self.device_state.u2_device.screenshot()
             if screenshot is None:
                 self.device_state.logger.warning("无法获取截图")
                 return False
@@ -922,7 +764,6 @@ class GameActions:
             config_manager = ConfigManager()
             change_card_cost_threshold = config_manager.get_change_card_cost_threshold()
 
-            # 先收集所有卡牌信息
             for cnt in contours:
                 rect = cv2.minAreaRect(cnt)
                 (x, y), (w, h), angle = rect
@@ -930,10 +771,11 @@ class GameActions:
                     center_x = int(x) + roi_x1
                     center_y = int(y) + roi_y1
                     card_roi = image[int(center_y - 13):int(center_y + 14), int(center_x - 10):int(center_x + 10)]
-                    
-                    # 新的费用识别方法：灰度+二值化+轮廓分割+SSIM匹配
-                    cost, confidence = self._recognize_cost_with_contour_ssim(card_roi, self.device_state, debug_flag)
-                    
+                    # Canny高阈值边缘检测
+                    gray_roi = cv2.cvtColor(card_roi, cv2.COLOR_BGR2GRAY)
+                    edges = cv2.Canny(gray_roi, 80, 250)
+                    edges_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+                    cost, confidence = self.cost_recognition.recognize_cost_number(edges_bgr, self.device_state)
                     card_infos.append({'center_x': center_x, 'center_y': center_y, 'cost': cost, 'confidence': confidence})
                     
                     # 在换牌区绘制中心点和最小外接矩形
@@ -952,25 +794,17 @@ class GameActions:
                             os.makedirs(debug_cost_dir)
                         roi_filename = f"change_card_{center_x}_{center_y}_{int(time.time()*1000)}.png"
                         roi_path = os.path.join(debug_cost_dir, roi_filename)
-                        cv2.imwrite(roi_path, card_roi)
-                        # self.device_state.logger.info(f"已保存卡牌ROI: {roi_filename}")
-            
-            # 按x坐标排序（从左到右）
-            card_infos.sort(key=lambda x: x['center_x'])
-            
-            # 按从左到右的顺序执行换牌
-            for card_info in card_infos:
-                cost = card_info['cost']
-                center_x = card_info['center_x']
-                center_y = card_info['center_y']
-                
-                if cost > change_card_cost_threshold:
-                    self.device_state.logger.info(f"检测到费用{cost}的卡牌，换牌")
-                    human_like_drag(self.device_state.u2_device, center_x+66, 516, center_x+66,208, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+                        cv2.imwrite(roi_path, edges)
+                        self.device_state.logger.info(f"已保存卡牌ROI: {roi_filename}")
+                    
+                    # 记录换牌区卡牌费用信息并执行换牌
+                    if cost > change_card_cost_threshold:
+                        self.device_state.logger.info(f"检测到费用{cost}的卡牌，换牌")
+                        human_like_drag(self.device_state.u2_device, center_x+66, 516, center_x+66,208, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
             
             # 保存带有所有绿点的原图
             if debug_flag:
-                # self.device_state.logger.info(f"开始保存换牌debug图片，检测到{len(card_infos)}张卡牌")
+                self.device_state.logger.info(f"开始保存换牌debug图片，检测到{len(card_infos)}张卡牌")
                 debug_cost_dir = "debug_cost"
                 if not os.path.exists(debug_cost_dir):
                     os.makedirs(debug_cost_dir)
@@ -985,211 +819,19 @@ class GameActions:
                         cv2.circle(debug_img, (center_x, center_y), 8, (0, 255, 0), 2)
                     debug_img_path = os.path.join(debug_cost_dir, f"change_card_all_{int(time.time()*1000)}.png")
                     cv2.imwrite(debug_img_path, debug_img)
-                    # self.device_state.logger.info(f"已保存原图debug: {debug_img_path}")
+                    self.device_state.logger.info(f"已保存原图debug: {debug_img_path}")
                     
                     # 保存换牌区上标记中心点和最小外接矩形的图
                     change_area_draw_path = os.path.join(debug_cost_dir, f"change_card_area_draw_{int(time.time()*1000)}.png")
                     cv2.imwrite(change_area_draw_path, change_area_draw)
-                    # self.device_state.logger.info(f"已保存换牌区debug: {change_area_draw_path}")
+                    self.device_state.logger.info(f"已保存换牌区debug: {change_area_draw_path}")
                 except Exception as e:
                     self.device_state.logger.error(f"保存换牌debug图片时出错: {str(e)}")
-            
-            return True
-            
+
         except Exception as e:
             self.device_state.logger.error(f"换牌检测出错: {str(e)}")
             return False
-
-    def _recognize_cost_with_contour_ssim(self, card_roi, device_state=None, debug_flag=False):
-        """使用轮廓检测+SSIM相似度匹配识别费用数字"""
-        try:
-            # 截取数字区域（左上角）
-            digit_roi = card_roi[0:27, 0:20]  # 高27，宽20
-            
-            # 灰度化
-            gray_digit = cv2.cvtColor(digit_roi, cv2.COLOR_BGR2GRAY)
-            
-            # 二值化（阈值170）
-            _, binary_digit = cv2.threshold(gray_digit, 170, 255, cv2.THRESH_BINARY)
-            
-            # 保存二值化后的完整数字区域（用于调试）
-            if debug_flag and device_state and device_state.logger:
-                debug_cost_dir = "debug_cost"
-                if not os.path.exists(debug_cost_dir):
-                    os.makedirs(debug_cost_dir)
-                binary_filename = f"binary_digit_{int(time.time()*1000)}.png"
-                binary_path = os.path.join(debug_cost_dir, binary_filename)
-                cv2.imwrite(binary_path, binary_digit)
-                # device_state.logger.info(f"已保存二值化数字区域: {binary_filename}")
-            
-            # 轮廓检测（用于获取数字边界信息，但不分割）
-            contours, _ = cv2.findContours(binary_digit, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if not contours:
-                if device_state and device_state.logger:
-                    device_state.logger.debug("未检测到数字轮廓")
-                return 0, 0.0
-            
-            # 筛选合适的轮廓（面积和尺寸过滤）
-            valid_contours = []
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area > 20:  # 最小面积阈值
-                    x, y, w, h = cv2.boundingRect(cnt)
-                    if w > 3 and h > 5:  # 最小尺寸阈值
-                        valid_contours.append((cnt, x, y, w, h))
-            
-            if not valid_contours:
-                if device_state and device_state.logger:
-                    device_state.logger.debug("未找到有效的数字轮廓")
-                return 0, 0.0
-            
-            # 按x坐标排序（从左到右）
-            valid_contours.sort(key=lambda x: x[1])
-            
-            # 记录轮廓信息（用于调试）
-            if device_state and device_state.logger:
-                for i, (cnt, x, y, w, h) in enumerate(valid_contours):
-                    device_state.logger.debug(f"检测到轮廓{i+1}: 位置({x},{y}), 尺寸({w}x{h}), 面积: {cv2.contourArea(cnt):.1f}")
-            
-            # 直接对完整数字区域进行SSIM匹配（使用轮廓信息但不分割）
-            best_cost, best_confidence = self._ssim_match_digit(binary_digit, device_state, debug_flag, 1)
-            
-            if device_state and device_state.logger:
-                device_state.logger.debug(f"轮廓检测+SSIM匹配结果: {best_cost}, 置信度: {best_confidence:.3f}")
-            
-            return best_cost, best_confidence
-            
-        except Exception as e:
-            if device_state and device_state.logger:
-                device_state.logger.error(f"轮廓检测+SSIM识别出错: {str(e)}")
-            return 0, 0.0
-
-    def _ssim_match_digit(self, digit_roi, device_state=None, debug_flag=False, digit_index=1):
-        """使用SSIM相似度匹配单个数字"""
-        try:
-            # 加载0-9的数字模板
-            template_dir = "templates/cost_numbers"
-            best_cost = 0
-            best_ssim = 0.0
-            best_template_path = ""
-            
-            for cost in range(10):  # 0-9
-                # 加载该数字的模板
-                template_paths = glob.glob(os.path.join(template_dir, f"{cost}_*.png"))
-                if not template_paths:
-                    continue
-                
-                for template_path in template_paths:
-                    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
-                    if template is None:
-                        continue
-                    
-                    # 二值化模板
-                    _, template_binary = cv2.threshold(template, 170, 255, cv2.THRESH_BINARY)
-                    
-                    # 调整模板大小以匹配目标
-                    h, w = digit_roi.shape
-                    template_resized = cv2.resize(template_binary, (w, h))
-                    
-                    # 计算SSIM相似度
-                    ssim_score = self._calculate_ssim(digit_roi, template_resized)
-                    
-                    if ssim_score > best_ssim:
-                        best_ssim = ssim_score
-                        best_cost = cost
-                        best_template_path = template_path
-                    
-                    # 保存匹配过程（用于调试）
-                    if debug_flag and device_state and device_state.logger and ssim_score > 0.5:
-                        debug_cost_dir = "debug_cost"
-                        if not os.path.exists(debug_cost_dir):
-                            os.makedirs(debug_cost_dir)
-                        
-                        # 保存模板匹配对比图
-                        template_name = os.path.basename(template_path).split('.')[0]
-                        comparison_filename = f"comparison_digit{digit_index}_cost{cost}_{template_name}_ssim{ssim_score:.3f}_{int(time.time()*1000)}.png"
-                        comparison_path = os.path.join(debug_cost_dir, comparison_filename)
-                        
-                        # 创建对比图：原数字 | 模板 | 差异
-                        h_roi, w_roi = digit_roi.shape
-                        h_tpl, w_tpl = template_resized.shape
-                        max_h = max(h_roi, h_tpl)
-                        comparison_img = np.zeros((max_h, w_roi + w_tpl + 10), dtype=np.uint8)
-                        
-                        # 放置原数字
-                        comparison_img[:h_roi, :w_roi] = digit_roi
-                        # 放置模板
-                        comparison_img[:h_tpl, w_roi+10:w_roi+10+w_tpl] = template_resized
-                        
-                        cv2.imwrite(comparison_path, comparison_img)
-                        device_state.logger.debug(f"已保存匹配对比图: {comparison_filename}")
-            
-            # 保存最佳匹配结果
-            if debug_flag and device_state and device_state.logger and best_ssim > 0:
-                debug_cost_dir = "debug_cost"
-                if not os.path.exists(debug_cost_dir):
-                    os.makedirs(debug_cost_dir)
-                
-                best_template_name = os.path.basename(best_template_path).split('.')[0]
-                best_match_filename = f"best_match_digit{digit_index}_cost{best_cost}_{best_template_name}_ssim{best_ssim:.3f}_{int(time.time()*1000)}.png"
-                best_match_path = os.path.join(debug_cost_dir, best_match_filename)
-                
-                # 创建最佳匹配对比图
-                h_roi, w_roi = digit_roi.shape
-                best_template = cv2.imread(best_template_path, cv2.IMREAD_GRAYSCALE)
-                _, best_template_binary = cv2.threshold(best_template, 170, 255, cv2.THRESH_BINARY)
-                best_template_resized = cv2.resize(best_template_binary, (w_roi, h_roi))
-                
-                max_h = max(h_roi, best_template_resized.shape[0])
-                best_comparison_img = np.zeros((max_h, w_roi + w_roi + 10), dtype=np.uint8)
-                best_comparison_img[:h_roi, :w_roi] = digit_roi
-                best_comparison_img[:h_roi, w_roi+10:w_roi*2+10] = best_template_resized
-                
-                cv2.imwrite(best_match_path, best_comparison_img)
-                device_state.logger.info(f"已保存最佳匹配结果: {best_match_filename}")
-            
-            return best_cost, best_ssim
-            
-        except Exception as e:
-            if device_state and device_state.logger:
-                device_state.logger.error(f"SSIM匹配出错: {str(e)}")
-            return 0, 0.0
-
-    def _calculate_ssim(self, img1, img2):
-        """计算两个图像的SSIM相似度"""
-        try:
-            # 确保两个图像都是uint8类型
-            img1 = img1.astype(np.uint8)
-            img2 = img2.astype(np.uint8)
-            
-            # 计算均值
-            mu1 = np.mean(img1)
-            mu2 = np.mean(img2)
-            
-            # 计算方差
-            sigma1_sq = np.var(img1)
-            sigma2_sq = np.var(img2)
-            
-            # 计算协方差
-            sigma12 = np.mean((img1 - mu1) * (img2 - mu2))
-            
-            # SSIM参数
-            C1 = (0.01 * 255) ** 2
-            C2 = (0.03 * 255) ** 2
-            
-            # 计算SSIM
-            numerator = (2 * mu1 * mu2 + C1) * (2 * sigma12 + C2)
-            denominator = (mu1 ** 2 + mu2 ** 2 + C1) * (sigma1_sq + sigma2_sq + C2)
-            
-            if denominator == 0:
-                return 0.0
-            
-            ssim = numerator / denominator
-            return max(0.0, min(1.0, ssim))  # 确保结果在[0,1]范围内
-            
-        except Exception as e:
-            return 0.0
+        return True
 
     def _scan_enemy_followers(self, screenshot):
         """检测场上的敌方随从位置与血量"""
@@ -1203,10 +845,10 @@ class GameActions:
             return self.device_state.game_manager.scan_our_followers(screenshot)
         return []
 
-    def _scan_shield_targets(self):
+    def _scan_shield_targets(self, debug_flag=False):
         """扫描护盾"""
         if hasattr(self.device_state, 'game_manager') and self.device_state.game_manager:
-            return self.device_state.game_manager.scan_shield_targets()
+            return self.device_state.game_manager.scan_shield_targets(debug_flag)
         return []
 
     def _detect_evolution_button(self, screenshot):
@@ -1247,11 +889,11 @@ def human_like_drag(u2_device, x1, y1, x2, y2, duration=None):
             val = minv
         return max(minv, min(maxv, val))
 
-    # 起点终点加微小扰动（减少扰动范围，提高稳定性）
-    sx = clamp(x1, 0, SCREEN_WIDTH) + random.randint(-2, 2)
-    sy = clamp(y1, 0, SCREEN_HEIGHT) + random.randint(-2, 2)
-    ex = clamp(x2, 0, SCREEN_WIDTH) + random.randint(-2, 2)
-    ey = clamp(y2, 0, SCREEN_HEIGHT) + random.randint(-2, 2)
+    # 起点终点加微小扰动
+    sx = clamp(x1, 0, SCREEN_WIDTH) + random.randint(-10, 10)
+    sy = clamp(y1, 0, SCREEN_HEIGHT) + random.randint(-10, 10)
+    ex = clamp(x2, 0, SCREEN_WIDTH) + random.randint(-10, 10)
+    ey = clamp(y2, 0, SCREEN_HEIGHT) + random.randint(-10, 10)
     # 再次强制扰动后仍在屏幕内
     sx = clamp(sx, 0, SCREEN_WIDTH)
     sy = clamp(sy, 0, SCREEN_HEIGHT)
@@ -1264,5 +906,5 @@ def human_like_drag(u2_device, x1, y1, x2, y2, duration=None):
             duration = float(duration)
         except Exception:
             duration = 0.02
-        duration = max(0.05, min(1.0, duration))  # 限制拖动时长在0.05~1秒
+        duration = max(0.01, min(2.0, duration))  # 限制拖动时长在0.01~2秒
     u2_device.swipe(sx, sy, ex, ey, duration) 

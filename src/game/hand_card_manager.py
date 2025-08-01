@@ -33,47 +33,11 @@ class HandCardManager:
         if HandCardManager._sift_recognition_instance is None:
             HandCardManager._sift_recognition_instance = SiftCardRecognition("shadowverse_cards_cost")
             logger.info("首次创建SIFT识别器，加载卡牌模板")
-        # else:
-            # logger.info("复用已存在的SIFT识别器实例")
+        else:
+            logger.info("复用已存在的SIFT识别器实例")
         
         self.sift_recognition = HandCardManager._sift_recognition_instance
-
-    def recognize_hand_shield_card(self) -> bool:
-        """
-        检测手牌中是否有守护卡牌名字
         
-        Returns:
-            bool: 如果手牌中有shield随从则返回True，否则返回False
-        """
-        try:
-        #     # 从game_constants导入shield随从列表
-            from src.config.game_constants import SHIELD_FOLLOWER_NAMES
-            shield_names = SHIELD_FOLLOWER_NAMES
-            # logger.info(f"成功加载 {len(shield_names)} 个shield随从名字")
-            
-            # 获取当前手牌
-            hand_cards = self.get_hand_cards_with_retry(silent=True)
-            if not hand_cards:
-                logger.info("未识别到手牌，无法检测shield随从")
-                return False
-            
-            # 检查手牌中是否有shield随从
-            found_shield_cards = []
-            for card in hand_cards:
-                card_name = card.get('name', '')
-                if card_name in shield_names:
-                    found_shield_cards.append(card_name)
-            
-            if found_shield_cards:
-                logger.warning(f"手牌中发现护盾手牌: {' | '.join(found_shield_cards)}")
-                return True
-            else:
-                return False
-                
-        except Exception as e:
-            logger.error(f"检测shield随从时出错: {str(e)}")
-            return False
-
     def recognize_hand_cards(self, screenshot, silent=False) -> List[Dict]:
         """
         使用SIFT识别手牌区域中的卡牌
@@ -97,10 +61,8 @@ class HandCardManager:
                 # 输出识别结果
                 card_info = []
                 for card in recognized_cards:
-                    card_info.append(f"{card['cost']}费_{card['name']}")
-                    #加上了置信度 card_info.append(f"{card['cost']}费_{card['name']}({card['confidence']:.2f})")
+                    card_info.append(f"{card['cost']}费_{card['name']}({card['confidence']:.2f})")
                 logger.info(f"手牌详情: {' | '.join(card_info)}")
-                
             elif not recognized_cards and not silent:
                 logger.info("SIFT未识别到任何手牌")
             
@@ -146,10 +108,6 @@ class HandCardManager:
                         SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
                         SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
                     )
-                    time.sleep(0.1)
-                    #移除手牌光标提高识别率
-                    from src.config.game_constants import DEFAULT_ATTACK_TARGET
-                    self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
                     time.sleep(1.2)
             
             except Exception as e:

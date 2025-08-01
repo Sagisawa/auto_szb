@@ -98,6 +98,7 @@ def get_easyocr_reader(gpu_enabled: bool = None, model_dir: str = None):
     
     try:
         import easyocr
+        import os
         # 使用resource_utils来正确处理PyInstaller打包后的路径
         from src.utils.resource_utils import resource_path
         fixed_model_dir = resource_path("models")
@@ -118,7 +119,7 @@ def get_easyocr_reader(gpu_enabled: bool = None, model_dir: str = None):
         _easyocr_initialized = True
         return _easyocr_reader
     except ImportError:
-        logger.error("EasyOCR导入失败")
+        logger.error("EasyOCR未安装")
         return None
     except Exception as e:
         logger.error(f"初始化EasyOCR失败: {str(e)}")

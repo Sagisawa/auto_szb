@@ -160,7 +160,7 @@ class DeviceManager:
         while device_state.script_running:
             start_time = time.time()
 
-            # 检查超时并重启游戏
+            # 检查超时并重启模拟器
             if device_state.check_timeout_and_restart():
                 # 如果重启成功，继续循环；如果失败，等待一段时间后继续
                 time.sleep(30)
@@ -182,7 +182,7 @@ class DeviceManager:
 
             # 计算处理时间并调整等待
             process_time = time.time() - start_time
-            sleep_time = max(0, 1 - process_time)
+            sleep_time = max(0, 2 - process_time)
             time.sleep(sleep_time)
     
     def _process_game_logic(self, device_state: DeviceState, game_manager: GameManager, skip_buttons: List[str]):
@@ -217,10 +217,6 @@ class DeviceManager:
                     device_state.u2_device.click(659 + random.randint(-10, 10), 338 + random.randint(-10, 10))
                     continue
 
-                if key == 'mainPage':
-                    device_state.u2_device.click(987 + random.randint(-10, 10), 447 + random.randint(-10, 10))
-                    continue
-
                 if key == 'dailyCard':
                     device_state.u2_device.click(640 + random.randint(-2, 2), 646 + random.randint(-2, 2))
                     continue
@@ -234,20 +230,15 @@ class DeviceManager:
                     # 检测到"决斗"按钮，表示新对战开始
                     device_state.logger.debug(f"检测到决斗按钮 - 当前in_match: {device_state.in_match}")
                     device_state.start_new_match()
-                    # 计算中心点并点击
-                    center_x = max_loc[0] + template_info['w'] // 2
-                    center_y = max_loc[1] + template_info['h'] // 2
-                    device_state.u2_device.click(center_x + random.randint(-2, 2), center_y + random.randint(-2, 2))
-                    time.sleep(3)
                     device_state.logger.debug(f"调用start_new_match后 - in_match: {device_state.in_match}")
-                    continue
 
                 if key == 'decision':
+                    device_state.logger.info("检测到换牌阶段")
                     game_manager.game_actions._detect_change_card()
-                    time.sleep(0.5)
                     center_x = max_loc[0] + template_info['w'] // 2
                     center_y = max_loc[1] + template_info['h'] // 2
                     device_state.u2_device.click(center_x + random.randint(-2, 2), center_y + random.randint(-2, 2))
+                    device_state.logger.info("换牌阶段完毕")
                     break
 
                 if key == 'end_round':
