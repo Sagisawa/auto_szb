@@ -146,6 +146,10 @@ class HandCardManager:
                         SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
                         SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
                     )
+                    time.sleep(0.1)
+                    #移除手牌光标提高识别率
+                    from src.config.game_constants import DEFAULT_ATTACK_TARGET
+                    self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
                     time.sleep(1.2)
             
             except Exception as e:

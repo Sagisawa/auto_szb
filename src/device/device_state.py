@@ -12,8 +12,11 @@ import queue
 import subprocess
 import psutil
 from collections import defaultdict
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, TYPE_CHECKING
 from src.utils.resource_utils import ensure_directory
+
+if TYPE_CHECKING:
+    from src.game.game_manager import GameManager
 
 
 class DeviceState:
@@ -67,7 +70,7 @@ class DeviceState:
         self.adb_device: Optional[Any] = None
         
         # 游戏管理器
-        self.game_manager: Optional[Any] = None
+        self.game_manager: Optional['GameManager'] = None
         
         # 随从管理器 - 将在GameManager初始化时设置
         self.follower_manager: Optional[Any] = None
@@ -107,19 +110,19 @@ class DeviceState:
 
         return logger
 
-    def take_screenshot(self) -> Optional[Any]:
-        """获取设备截图"""
-        if self.adb_device is None:
-            return None
+    # def take_screenshot(self) -> Optional[Any]:
+    #     """获取设备截图"""
+    #     if self.adb_device is None:
+    #         return None
 
-        try:
-            return self.adb_device.screenshot()
-        except Exception as e:
-            self.logger.error(f"截图失败: {str(e)}")
-            return None
+    #     try:
+    #         return self.adb_device.screenshot()
+    #     except Exception as e:
+    #         self.logger.error(f"截图失败: {str(e)}")
+    #         return None
 
     # MUMU模拟器国际服的截图方法，打包国际服的时候的时候截图函数切换成这个
-    def take_screenshot_bk(self) -> Optional[Any]:
+    def take_screenshot(self) -> Optional[Any]:
         """获取设备截图"""
         if self.adb_device is None:
             return None
@@ -140,8 +143,8 @@ class DeviceState:
                 else:
                     img_bgr = img_array
                 
-                # 提高亮度50
-                brightness = 50
+                # 提高亮度40
+                brightness = 40
                 img_brightened = cv2.add(img_bgr, brightness)
                 
                 # 转换回RGB格式

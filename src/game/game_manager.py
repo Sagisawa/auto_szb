@@ -3,6 +3,7 @@
 实现核心游戏逻辑和操作
 """
 
+from re import T
 import cv2
 from easyocr.craft import F
 import numpy as np
@@ -275,6 +276,11 @@ class GameManager:
                     cv2.circle(contour_debug, (int(center_x), int(center_y)), 5, (0, 255, 255), -1)
                     cv2.putText(contour_debug, f"HP: {hp_value}", (int(center_x - 20), int(center_y - 20)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                    # 绘制长宽和面积信息
+                    cv2.putText(contour_debug, f"W: {w:.1f} H: {h:.1f}", (int(center_x - 20), int(center_y + 15)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                    cv2.putText(contour_debug, f"Area: {area:.0f}", (int(center_x - 20), int(center_y + 30)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
         if debug_flag:
             timestamp1 = int(time.time() * 1000)
@@ -433,7 +439,7 @@ class GameManager:
                             debug_cy = int(cy) + 30  # 向下偏移30像素
                             cv2.circle(debug_img_color, (debug_cx, debug_cy), 7, (0, 255, 255), 2)
                     continue  # 分水岭分割后不再走后续大随从分左右中心逻辑
-                if  150 > max_dim > 90 or 230 > max_dim > 200:
+                if  230 > max_dim > 80:
                     if max_dim > 230:
                         box = cv2.boxPoints(rect)
                         box = box.astype(np.int32)
@@ -621,7 +627,7 @@ class GameManager:
                             debug_cy = int(cy) + 30  # 向下偏移30像素
                             cv2.circle(debug_img_color, (debug_cx, debug_cy), 7, (0, 255, 255), 2)
                     continue  # 分水岭后不再走后续逻辑
-                if 150 > max_dim > 90 or 230 > max_dim > 200:
+                if 230 > max_dim > 80:
                     center_x, center_y = rect[0]
                     center_x_full = center_x + 176
                     center_y_full = center_y + 295
@@ -1318,8 +1324,8 @@ class GameManager:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         shield_targets = []
         images = []
-        for _ in range(3):
-            time.sleep(0.3)
+        for _ in range(5):
+            time.sleep(0.2)
             screenshot = self.device_state.take_screenshot()
             if screenshot is None:
                 continue
@@ -1329,9 +1335,8 @@ class GameManager:
         if not images:
             return shield_targets
         all_positions = []
-        timestamp = int(time.time() * 1000)
         # 并发处理每张图的护盾检测
-        with ThreadPoolExecutor(max_workers=min(3, len(images))) as executor:
+        with ThreadPoolExecutor(max_workers=min(5, len(images)+1)) as executor:
             futures = [executor.submit(self._process_shield_image, img, debug_flag) for img in images]
             for future in as_completed(futures):
                 try:
@@ -1365,10 +1370,26 @@ class GameManager:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, np.array([23, 46, 30]), np.array([89, 255, 255]))
 
-        # 形态学操作
-        kernel = np.ones((1, 1), np.uint8)
-        mask = cv2.erode(cv2.dilate(mask, kernel, iterations=1), kernel, iterations=1)
+        # 形态学操作 - 使用椭圆核，分别进行腐蚀和膨胀（新方法）
+        kernel_size = 1  # 椭圆核大小
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        
+        # 分别进行腐蚀和膨胀操作
+        erode_iterations = 1
+        dilate_iterations = 1
+        
+        # 先进行腐蚀操作
+        if erode_iterations > 0:
+            mask = cv2.erode(mask, kernel, iterations=erode_iterations)
+        
+        # 再进行膨胀操作
+        if dilate_iterations > 0:
+            mask = cv2.dilate(mask, kernel, iterations=dilate_iterations)
 
+        
+        # # 形态学操作
+        # kernel = np.ones((2, 2), np.uint8)
+        # mask = cv2.erode(cv2.dilate(mask, kernel, iterations=1), kernel, iterations=1)
         # 查找轮廓
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1378,15 +1399,13 @@ class GameManager:
             min_dim = min(w, h)
             max_dim = max(w, h)
             
-            if  (120>max_dim >90 and 65>min_dim>55 and area > 900) or (154>max_dim >147 and 122>min_dim>115 and 4000 > area > 3000):
+            if  (140>max_dim >80 and 72>min_dim>45 and area > 700) :
                 cx, cy = x + w // 2, y + h // 2
                 # 自动转换为全屏坐标
                 global_cx = cx + offset_x
                 global_cy = cy + offset_y
-                if 249 < global_cx < 1042 and 173 < global_cy < 275:
-                    shield_targets.append((global_cx, global_cy))
-
-                    if debug_flag:
+                shield_targets.append((global_cx, global_cy))
+                if debug_flag:
                         # 创建调试图像
                         debug_img = image.copy()
                         logging.info(f"debug_img shape: {debug_img.shape}, dtype: {debug_img.dtype}")
