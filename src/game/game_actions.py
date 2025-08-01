@@ -485,10 +485,10 @@ class GameActions:
         current_round = self.device_state.current_round_count
         available_cost = min(10, current_round)  # 基础费用 = 当前回合数（最大10）
         
-        # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
-        if self.hand_manager.recognize_hand_shield_card():
-            self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-            return
+        # # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
+        # if self.hand_manager.recognize_hand_shield_card():
+        #     self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
+        #     return
         
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:
@@ -582,6 +582,8 @@ class GameActions:
         max_retry_attempts = 2  # 最多重试次数
         total_cost_used = 0
         retry_count = 0
+        # 当前回合需要忽略的卡牌（如剑士的斩击在没有敌方随从时）
+        self._current_round_ignored_cards = set()
         self.device_state.logger.info(f"当前回合：{current_round}，可用费用: {available_cost}")
 
         hand_manager = self.hand_manager
@@ -594,10 +596,14 @@ class GameActions:
         from src.config.card_priorities import get_high_priority_cards, get_card_priority
         high_priority_cards_cfg = get_high_priority_cards()
         high_priority_names = set(high_priority_cards_cfg.keys())
+        
+        # 过滤掉当前回合需要忽略的卡牌
+        filtered_cards = [c for c in cards if c.get('name', '') not in self._current_round_ignored_cards]
+        
         # 高优先级卡牌
-        priority_cards = [c for c in cards if c.get('name', '') in high_priority_names]
+        priority_cards = [c for c in filtered_cards if c.get('name', '') in high_priority_names]
         # 普通卡牌
-        normal_cards = [c for c in cards if c.get('name', '') not in high_priority_names]
+        normal_cards = [c for c in filtered_cards if c.get('name', '') not in high_priority_names]
         # 高优先级卡牌排序：先按priority（数字小优先），再按费用从高到低
         priority_cards.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
         # 普通卡牌按费用从高到低排序
@@ -638,15 +644,33 @@ class GameActions:
             extra_cost_bonus = getattr(self, '_current_extra_cost_bonus', 0)
             if extra_cost_bonus > 0:
                 remain_cost += extra_cost_bonus
-                self.device_state.logger.info(f"获得额外费用奖励，剩余费用增加至: {remain_cost}")
                 # 清除额外费用奖励，避免重复使用
                 self._current_extra_cost_bonus = 0
             
             # 记录最后打出的卡牌名称，用于特殊逻辑判断
             self._last_played_card = name
-            if cost > 0:
+            
+            # 检查是否应该消耗费用
+            should_not_consume_cost = getattr(self, '_should_not_consume_cost', False)
+            if should_not_consume_cost:
+                self.device_state.logger.info(f"特殊卡牌 {name} 未消耗费用")
+                # 清除不消耗费用的标记，避免影响后续卡牌
+                self._should_not_consume_cost = False
+            elif cost > 0:
                 remain_cost -= cost
                 total_cost_used += cost
+            
+            # 检查是否需要从手牌中移除
+            should_remove_from_hand = getattr(self, '_should_remove_from_hand', False)
+            if should_remove_from_hand:
+                self.device_state.logger.info(f"特殊卡牌 {name} 已加入当前回合忽略列表")
+                # 将卡牌加入当前回合忽略列表
+                self._current_round_ignored_cards.add(name)
+                # 清除需要移除的标记，避免影响后续卡牌
+                self._should_remove_from_hand = False
+                # 不从planned_cards中移除，因为这张卡实际上没有被打出
+                continue  # 跳过后续的手牌更新逻辑
+            
             planned_cards.remove(card_to_play)
             if planned_cards and (remain_cost > 0 or any(c.get('cost', 0) == 0 for c in planned_cards)):
                 time.sleep(0.2)
@@ -668,7 +692,9 @@ class GameActions:
                     
                     # 修正：重建planned_cards时包含所有新检测到的卡牌，而不仅仅是初始计划中的卡牌
                     # 这样可以处理新抽到的卡牌（如0费卡牌）
-                    planned_cards = new_cards
+                    # 过滤掉当前回合需要忽略的卡牌
+                    filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                    planned_cards = filtered_cards
                     
                     # 重新应用优先级排序
                     high_priority_names = set(high_priority_cards_cfg.keys())
@@ -722,8 +748,11 @@ class GameActions:
                 card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
             self.device_state.logger.info(f"额外扫描手牌状态: {' | '.join(card_info)}")
             
+            # 过滤掉当前回合需要忽略的卡牌
+            filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+            
             # 查找0费卡牌
-            zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+            zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
             if zero_cost_cards:
                 # 按优先级排序0费卡牌
                 high_priority_names = set(high_priority_cards_cfg.keys())
@@ -763,8 +792,11 @@ class GameActions:
                         card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
                     self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
                     
+                    # 过滤掉当前回合需要忽略的卡牌
+                    filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                    
                     # 查找0费卡牌
-                    zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+                    zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
                     if zero_cost_cards:
                         # 按优先级排序0费卡牌
                         high_priority_names = set(high_priority_cards_cfg.keys())
@@ -808,8 +840,11 @@ class GameActions:
                     card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
                 self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
                 
+                # 过滤掉当前回合需要忽略的卡牌
+                filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                
                 # 查找0费卡牌
-                zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+                zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
                 if zero_cost_cards:
                     # 按优先级排序0费卡牌
                     high_priority_names = set(high_priority_cards_cfg.keys())
@@ -847,6 +882,20 @@ class GameActions:
             self.device_state.logger.info(f"获得额外费用: +{extra_cost_bonus}")
             # 将额外费用奖励存储到实例变量中，供调用方使用
             self._current_extra_cost_bonus = extra_cost_bonus
+        
+        # 处理不消耗费用的特殊情况
+        should_not_consume_cost = getattr(card_play_actions, '_should_not_consume_cost', False)
+        if should_not_consume_cost:
+            self.device_state.logger.info("特殊卡牌未消耗费用")
+            # 将不消耗费用的标记存储到实例变量中，供调用方使用
+            self._should_not_consume_cost = True
+        
+        # 处理需要从手牌中移除的特殊情况
+        should_remove_from_hand = getattr(card_play_actions, '_should_remove_from_hand', False)
+        if should_remove_from_hand:
+            self.device_state.logger.info("特殊卡牌需要从手牌中移除")
+            # 将需要移除的标记存储到实例变量中，供调用方使用
+            self._should_remove_from_hand = True
         
         return result
 

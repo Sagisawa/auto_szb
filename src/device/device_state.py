@@ -110,54 +110,54 @@ class DeviceState:
 
         return logger
 
-    # def take_screenshot(self) -> Optional[Any]:
-    #     """获取设备截图"""
-    #     if self.adb_device is None:
-    #         return None
-
-    #     try:
-    #         return self.adb_device.screenshot()
-    #     except Exception as e:
-    #         self.logger.error(f"截图失败: {str(e)}")
-    #         return None
-
-    # MUMU模拟器国际服的截图方法，打包国际服的时候的时候截图函数切换成这个
     def take_screenshot(self) -> Optional[Any]:
         """获取设备截图"""
         if self.adb_device is None:
             return None
 
         try:
-            screenshot = self.adb_device.screenshot()
-            if screenshot is not None:
-                # 转换为numpy数组进行亮度调整
-                import numpy as np
-                import cv2
-                
-                # 将PIL图像转换为numpy数组
-                img_array = np.array(screenshot)
-                
-                # 转换为BGR格式（OpenCV默认格式）
-                if len(img_array.shape) == 3:
-                    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
-                else:
-                    img_bgr = img_array
-                
-                # 提高亮度40
-                brightness = 40
-                img_brightened = cv2.add(img_bgr, brightness)
-                
-                # 转换回RGB格式
-                img_rgb = cv2.cvtColor(img_brightened, cv2.COLOR_BGR2RGB)
-                
-                # 转换回PIL图像
-                from PIL import Image
-                return Image.fromarray(img_rgb)
-            else:
-                return None
+            return self.adb_device.screenshot()
         except Exception as e:
             self.logger.error(f"截图失败: {str(e)}")
             return None
+
+    # # MUMU模拟器国际服的截图方法，打包国际服的时候的时候截图函数切换成这个
+    # def take_screenshot(self) -> Optional[Any]:
+    #     """获取设备截图"""
+    #     if self.adb_device is None:
+    #         return None
+
+    #     try:
+    #         screenshot = self.adb_device.screenshot()
+    #         if screenshot is not None:
+    #             # 转换为numpy数组进行亮度调整
+    #             import numpy as np
+    #             import cv2
+                
+    #             # 将PIL图像转换为numpy数组
+    #             img_array = np.array(screenshot)
+                
+    #             # 转换为BGR格式（OpenCV默认格式）
+    #             if len(img_array.shape) == 3:
+    #                 img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    #             else:
+    #                 img_bgr = img_array
+                
+    #             # 提高亮度40
+    #             brightness = 40
+    #             img_brightened = cv2.add(img_bgr, brightness)
+                
+    #             # 转换回RGB格式
+    #             img_rgb = cv2.cvtColor(img_brightened, cv2.COLOR_BGR2RGB)
+                
+    #             # 转换回PIL图像
+    #             from PIL import Image
+    #             return Image.fromarray(img_rgb)
+    #         else:
+    #             return None
+    #     except Exception as e:
+    #         self.logger.error(f"截图失败: {str(e)}")
+    #         return None
 
     def save_screenshot(self, screenshot, scene="general") -> Optional[str]:
         """保存截图并添加场景标签"""
