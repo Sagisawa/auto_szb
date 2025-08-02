@@ -17,7 +17,7 @@ from src.config.game_constants import (
     BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
 )
 import math
-from src.config.card_priorities import is_evolve_priority_card, get_evolve_priority_cards, is_evolve_special_action_card, get_evolve_special_actions
+from src.config.card_priorities import get_card_priority, is_evolve_priority_card, get_evolve_priority_cards, is_evolve_special_action_card, get_evolve_special_actions
 from src.config.config_manager import ConfigManager
 import glob
 
@@ -64,8 +64,12 @@ class GameActions:
 
         if shield_detected:
             shield_queue = shield_targets.copy()
+            max_attempts = 5  # 最多循环5次
+            attempt_count = 0
 
-            while shield_queue:
+            while shield_queue and attempt_count < max_attempts:
+                attempt_count += 1
+                self.device_state.logger.info(f"破盾尝试第{attempt_count}/5次")
                 current_shield = shield_queue[0]
                 shield_x, shield_y = current_shield
 
@@ -91,7 +95,7 @@ class GameActions:
                         else:
                             self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
                         human_like_drag(self.device_state.u2_device, closest_follower[0], closest_follower[1], shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                        time.sleep(3)
+                        time.sleep(1)
                         break  # 已攻击则跳出类型循环
 
                 if not closest_follower:
@@ -126,6 +130,10 @@ class GameActions:
                     ]
 
                 time.sleep(0.2)
+            
+            # 检查是否因为达到最大尝试次数而退出循环
+            if attempt_count >= max_attempts and shield_queue:
+                self.device_state.logger.warning(f"达到最大破盾尝试次数({max_attempts}次)，停止破盾操作")
 
         # 没有护盾，使用绿色随从攻击敌方主人
         green_followers = [(x, y, name) for x, y, t, name in all_followers if t == "green"]
@@ -137,7 +145,7 @@ class GameActions:
                     self.device_state.logger.info("使用疾驰随从攻击敌方玩家")
                 target_x, target_y = default_target
                 human_like_drag(self.device_state.u2_device, x, y, target_x, target_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                time.sleep(0.55)
+                time.sleep(0.45)
 
         # 使用黄色突进随从攻击敌方血量最小的随从
         if not shield_detected:
@@ -156,7 +164,7 @@ class GameActions:
                                 else:
                                     self.device_state.logger.info("使用突进随从攻击敌方血量较小的随从")
                                 human_like_drag(self.device_state.u2_device, x, y, enemy_x, enemy_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                                time.sleep(0.55)
+                                time.sleep(0.45)
                     except Exception as e:
                         self.device_state.logger.warning(f"突进敌方最小血量随从失败: {str(e)}")
 
@@ -245,7 +253,7 @@ class GameActions:
 
                     # 特殊超进化后操作（如铁拳神父）
                     if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=True)
+                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=True, existing_followers=all_followers)
                     # 如果超进化到突进或者普通随从，则再检查无护盾后攻击敌方随从
                     if follower_type in ["yellow", "normal"]:
                         # 等待超进化动画完成
@@ -299,60 +307,22 @@ class GameActions:
 
                     # 特殊进化后操作（如铁拳神父）
                     if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=False)
+                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=False, existing_followers=all_followers)
                 break
             time.sleep(0.01)
         time.sleep(2)  # 短暂等待
 
-    def _handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False):
+    def _handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False, existing_followers=None):
         """
         处理进化/超进化后特殊action（如铁拳神父等），便于扩展
         follower_name: 卡牌名称
         pos: 进化随从的坐标（如有需要）
         is_super_evolution: 是否为超进化
+        existing_followers: 已扫描的随从结果，避免重复扫描
         """
-        special_actions = get_evolve_special_actions()
-        
-        if is_super_evolution:
-            # 超进化逻辑
-            action = special_actions.get(follower_name, {}).get('super_evolution_action', None)
-            if action == 'attack_two_enemy_followers_hp_less_than_4':
-                # 超进化后点击两个3血以下（包括3血）的对面随从
-                screenshot = self.device_state.take_screenshot()
-                if screenshot:
-                    enemy_followers = self._scan_enemy_followers(screenshot)
-                    # 只保留HP为数字且<=3的随从
-                    valid_targets = [f for f in enemy_followers if f[3].isdigit() and int(f[3]) <= 3]
-                    if valid_targets:
-                        # 按血量从大到小排序，选择前两个
-                        sorted_targets = sorted(valid_targets, key=lambda f: int(f[3]), reverse=True)
-                        targets_to_click = sorted_targets[:2]
-                        
-                        for i, target in enumerate(targets_to_click):
-                            self.device_state.logger.info(f"[{follower_name}]超进化后点击第{i+1}个敌方HP<=3随从: ({target[0]}, {target[1]}) HP={target[3]}")
-                            self.device_state.u2_device.click(int(target[0]), int(target[1]))
-                            time.sleep(0.5)
-                    else:
-                        self.device_state.logger.info(f"[{follower_name}]超进化后未找到HP<=3随从")
-        else:
-            # 进化逻辑
-            action = special_actions.get(follower_name, {}).get('action', None)
-            if action == 'attack_enemy_follower_hp_less_than_4':
-                # 检查敌方随从，优先点击HP<=3且血量最大的
-                screenshot = self.device_state.take_screenshot()
-                if screenshot:
-                    enemy_followers = self._scan_enemy_followers(screenshot)
-                    # 只保留HP为数字且<=3的随从
-                    valid_targets = [f for f in enemy_followers if f[3].isdigit() and int(f[3]) <= 3]
-                    if valid_targets:
-                        # 选择血量最大的
-                        target = max(valid_targets, key=lambda f: int(f[3]))
-                        self.device_state.logger.info(f"[{follower_name}]进化后点击敌方HP<=3且最大随从: ({target[0]}, {target[1]}) HP={target[3]}")
-                        self.device_state.u2_device.click(int(target[0]), int(target[1]))
-                        time.sleep(0.5)
-                    else:
-                        self.device_state.logger.info(f"[{follower_name}]进化后未找到HP<=3随从")
-        # 以后可扩展更多action
+        from .evolution_special_actions import EvolutionSpecialActions
+        evolution_actions = EvolutionSpecialActions(self.device_state)
+        evolution_actions.handle_evolve_special_action(follower_name, pos, is_super_evolution, existing_followers)
 
     def perform_full_actions(self):
         """720P分辨率下的出牌攻击操作"""
@@ -361,6 +331,8 @@ class GameActions:
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
+        #移除手牌光标提高识别率
+        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
         time.sleep(0.3)
         
         # 获取截图
@@ -409,6 +381,9 @@ class GameActions:
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
+        time.sleep(0.2)
+        #移除手牌光标提高识别率
+        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
         time.sleep(0.3)
 
         # 获取截图
@@ -433,17 +408,13 @@ class GameActions:
         )
         time.sleep(1.5)
 
-        # from src.game.game_manager import GameManager
-        # GameManager(self.device_state).scan_enemy_HP()
-
-
         # 获取随从位置和类型
         screenshot = self.device_state.take_screenshot()
         if screenshot:
             our_followers_positions = self._scan_our_followers(screenshot)
             self.follower_manager.update_positions(our_followers_positions)
 
-        # 执行进化操作（不管类型，全部尝试进化）
+        # 执行进化操作
         self.perform_evolution_actions()
 
         # 等待最终进化/超进化动画完成
@@ -514,10 +485,10 @@ class GameActions:
         current_round = self.device_state.current_round_count
         available_cost = min(10, current_round)  # 基础费用 = 当前回合数（最大10）
         
-        # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
-        if self.hand_manager.recognize_hand_shield_card():
-            self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-            return
+        # # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
+        # if self.hand_manager.recognize_hand_shield_card():
+        #     self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
+        #     return
         
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:
@@ -627,8 +598,6 @@ class GameActions:
         high_priority_names = set(high_priority_cards_cfg.keys())
         
         # 过滤掉当前回合需要忽略的卡牌
-        if self._current_round_ignored_cards:
-            self.device_state.logger.info(f"过滤忽略列表中的卡牌: {list(self._current_round_ignored_cards)}")
         filtered_cards = [c for c in cards if c.get('name', '') not in self._current_round_ignored_cards]
         
         # 高优先级卡牌
@@ -669,7 +638,7 @@ class GameActions:
             name = card_to_play.get('name', '未知')
             cost = card_to_play.get('cost', 0)
             self.device_state.logger.info(f"打出卡牌: {name} (费用: {cost})")
-            self._play_single_card(card_to_play)
+            result = self._play_single_card(card_to_play)
             
             # 处理额外的费用奖励
             extra_cost_bonus = getattr(self, '_current_extra_cost_bonus', 0)
@@ -684,7 +653,7 @@ class GameActions:
             # 检查是否应该消耗费用
             should_not_consume_cost = getattr(self, '_should_not_consume_cost', False)
             if should_not_consume_cost:
-                self.device_state.logger.info(f"特殊卡牌 {name} 未消耗费用")
+                self.device_state.logger.info(f"出不了 {name}卡牌 ，不用消耗费用")
                 # 清除不消耗费用的标记，避免影响后续卡牌
                 self._should_not_consume_cost = False
             elif cost > 0:
@@ -694,19 +663,28 @@ class GameActions:
             # 检查是否需要从手牌中移除
             should_remove_from_hand = getattr(self, '_should_remove_from_hand', False)
             if should_remove_from_hand:
-                self.device_state.logger.info(f"特殊卡牌 {name} 已加入当前回合忽略列表")
+                self.device_state.logger.info(f"出不了 {name} ，已加入当前回合忽略列表")
                 # 将卡牌加入当前回合忽略列表
                 self._current_round_ignored_cards.add(name)
-                self.device_state.logger.info(f"当前忽略列表: {list(self._current_round_ignored_cards)}")
                 # 清除需要移除的标记，避免影响后续卡牌
                 self._should_remove_from_hand = False
-                # 不从planned_cards中移除，因为这张卡实际上没有被打出
+                # 从planned_cards中移除这张卡，避免重复处理
+                planned_cards.remove(card_to_play)
                 continue  # 跳过后续的手牌更新逻辑
+            
+            # 检查卡牌是否成功打出
+            if not result:
+                self.device_state.logger.info(f"卡牌 {name} 未成功打出，跳过后续逻辑")
+                continue
+            
             planned_cards.remove(card_to_play)
             if planned_cards and (remain_cost > 0 or any(c.get('cost', 0) == 0 for c in planned_cards)):
                 time.sleep(0.2)
                 #点击展牌位置
                 self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
+                time.sleep(0.2)
+                #移除手牌光标提高识别率
+                self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
                 time.sleep(1)
                 new_cards = hand_manager.get_hand_cards_with_retry(max_retries=2, silent=True)
                 if new_cards:
@@ -721,10 +699,8 @@ class GameActions:
                     # 修正：重建planned_cards时包含所有新检测到的卡牌，而不仅仅是初始计划中的卡牌
                     # 这样可以处理新抽到的卡牌（如0费卡牌）
                     # 过滤掉当前回合需要忽略的卡牌
-                    if self._current_round_ignored_cards:
-                        self.device_state.logger.info(f"重新扫描过滤忽略列表中的卡牌: {list(self._current_round_ignored_cards)}")
-                    filtered_new_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
-                    planned_cards = filtered_new_cards
+                    filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                    planned_cards = filtered_cards
                     
                     # 重新应用优先级排序
                     high_priority_names = set(high_priority_cards_cfg.keys())
@@ -749,7 +725,7 @@ class GameActions:
             hasattr(self, '_last_played_card') and 
             self._last_played_card == "诅咒派对"):
             
-            extra_cost = self._extra_scan_after_curse_party(hand_manager, high_priority_cards_cfg)
+            extra_cost = self._extra_scan_after_add_newcards(hand_manager, high_priority_cards_cfg,self._last_played_card)
             total_cost_used += extra_cost  # 添加额外扫描打出的费用
 
         if not hasattr(self.device_state, 'cost_history'):
@@ -757,14 +733,15 @@ class GameActions:
         self.device_state.cost_history.append(total_cost_used)
         self.device_state.logger.info(f"本回合出牌完成，消耗{total_cost_used}费 (可用费用: {available_cost})")
 
-    def _extra_scan_after_curse_party(self, hand_manager, high_priority_cards_cfg):
-        """诅咒派对用完费用后的额外扫描逻辑"""
-        self.device_state.logger.info("检测到打出诅咒派对用完费用，额外扫描一次手牌")
+    def _extra_scan_after_add_newcards(self, hand_manager, high_priority_cards_cfg,last_played_card):
+        """用完费用后的额外扫描逻辑"""
+        self.device_state.logger.info(f"检测到打出{last_played_card}用完费用，额外扫描一次手牌")
         time.sleep(0.2)
         # 点击展牌位置
         self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
         time.sleep(0.2)
-        self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] - 150, SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
+        #移除手牌光标提高识别率
+        self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
         time.sleep(1)
         
         new_cards = hand_manager.get_hand_cards_with_retry(max_retries=2, silent=True)
@@ -777,8 +754,11 @@ class GameActions:
                 card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
             self.device_state.logger.info(f"额外扫描手牌状态: {' | '.join(card_info)}")
             
+            # 过滤掉当前回合需要忽略的卡牌
+            filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+            
             # 查找0费卡牌
-            zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+            zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
             if zero_cost_cards:
                 # 按优先级排序0费卡牌
                 high_priority_names = set(high_priority_cards_cfg.keys())
@@ -803,7 +783,10 @@ class GameActions:
                 time.sleep(0.5)
                 # 再次点击展牌位置
                 self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-                time.sleep(1.5)
+                time.sleep(0.2)
+                #移除手牌光标提高识别率
+                self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
+                time.sleep(1)
                 
                 new_cards = hand_manager.get_hand_cards_with_retry(max_retries=3, silent=True)
                 if new_cards:
@@ -815,8 +798,11 @@ class GameActions:
                         card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
                     self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
                     
+                    # 过滤掉当前回合需要忽略的卡牌
+                    filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                    
                     # 查找0费卡牌
-                    zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+                    zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
                     if zero_cost_cards:
                         # 按优先级排序0费卡牌
                         high_priority_names = set(high_priority_cards_cfg.keys())
@@ -846,7 +832,8 @@ class GameActions:
             # 再次点击展牌位置
             self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
             time.sleep(0.2)
-            self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] - 150 , SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
+            #移除手牌光标提高识别率
+            self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
             time.sleep(1.5)
             
             new_cards = hand_manager.get_hand_cards_with_retry(max_retries=3, silent=True)
@@ -859,8 +846,11 @@ class GameActions:
                     card_info.append(f"{cost}费_{name}({center[0]},{center[1]})")
                 self.device_state.logger.info(f"第二次额外扫描手牌状态: {' | '.join(card_info)}")
                 
+                # 过滤掉当前回合需要忽略的卡牌
+                filtered_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                
                 # 查找0费卡牌
-                zero_cost_cards = [c for c in new_cards if c.get('cost', 0) == 0]
+                zero_cost_cards = [c for c in filtered_cards if c.get('cost', 0) == 0]
                 if zero_cost_cards:
                     # 按优先级排序0费卡牌
                     high_priority_names = set(high_priority_cards_cfg.keys())
@@ -887,7 +877,7 @@ class GameActions:
         return 0  # 没有打出卡牌，返回0
 
     def _play_single_card(self, card):
-        """打出单张牌（适配green/yellow/normal类型）"""
+        """打出单张牌"""
         from .card_play_special_actions import CardPlaySpecialActions
         card_play_actions = CardPlaySpecialActions(self.device_state)
         result = card_play_actions.play_single_card(card)
@@ -902,14 +892,12 @@ class GameActions:
         # 处理不消耗费用的特殊情况
         should_not_consume_cost = getattr(card_play_actions, '_should_not_consume_cost', False)
         if should_not_consume_cost:
-            self.device_state.logger.info("特殊卡牌未消耗费用")
             # 将不消耗费用的标记存储到实例变量中，供调用方使用
             self._should_not_consume_cost = True
         
         # 处理需要从手牌中移除的特殊情况
         should_remove_from_hand = getattr(card_play_actions, '_should_remove_from_hand', False)
         if should_remove_from_hand:
-            self.device_state.logger.info("特殊卡牌需要从手牌中移除")
             # 将需要移除的标记存储到实例变量中，供调用方使用
             self._should_remove_from_hand = True
         
@@ -1268,10 +1256,10 @@ class GameActions:
             return self.device_state.game_manager.scan_our_followers(screenshot)
         return []
 
-    def _scan_shield_targets(self, debug_flag=False):
+    def _scan_shield_targets(self):
         """扫描护盾"""
         if hasattr(self.device_state, 'game_manager') and self.device_state.game_manager:
-            return self.device_state.game_manager.scan_shield_targets(debug_flag)
+            return self.device_state.game_manager.scan_shield_targets()
         return []
 
     def _detect_evolution_button(self, screenshot):
