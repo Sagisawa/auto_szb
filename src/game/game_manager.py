@@ -82,9 +82,11 @@ class GameManager:
                 # 全局中敌方随从中心位置
                 center_x_full = in_card_center_x_full + 263
                 center_y_full = in_card_center_y_full + 297
+
+                enemy_atk_positions=[]
                 
                 # 添加到结果列表
-                enemy_atk_positions.append(center_x_full)
+                enemy_atk_positions.append((center_x_full,227+random.randint(-5,5)))
                 
                 # Debug 标注
                 if debug_flag:
@@ -1254,28 +1256,50 @@ class GameManager:
         images = []
         last_screenshot = None
         
+        # 先获取一张截图进行攻击力检测
+        try:  # 减少重试次数，因为只需要一张截图
+            time.sleep(0.5)
+            screenshot = self.device_state.take_screenshot()
+            if screenshot is not None:
+                last_screenshot = screenshot
+        except Exception as e:
+            import logging
+            logging.error(f"攻击力检测任务异常: {str(e)}")
+            return []
+        
+        if last_screenshot is None:
+            return []
+        
+        # 先进行攻击力检测
+        try:
+            enemy_atk_positions = self.scan_enemy_ATK(last_screenshot, debug_flag)
+            
+            # 如果攻击力检测结果为空，直接返回空列表
+            if not enemy_atk_positions:
+                return []
+                
+        except Exception as e:
+            import logging
+            logging.error(f"攻击力检测任务异常: {str(e)}")
+            return []
+        
+        # 攻击力检测结果不为空，继续进行护盾检测
         for _ in range(5):
             time.sleep(0.2)
             screenshot = self.device_state.take_screenshot()
             if screenshot is None:
                 continue
-            last_screenshot = screenshot  # 保存最后一张截图用于攻击力检测
             region = screenshot.crop(ENEMY_SHIELD_REGION)
             bgr_image = cv2.cvtColor(np.array(region), cv2.COLOR_RGB2BGR)
             images.append(bgr_image)
         
         if not images:
-            return shield_targets
+            return enemy_atk_positions  # 如果没有护盾图像，直接返回攻击力结果
             
-        # 使用更大的线程池，同时处理护盾检测和攻击力检测
-        with ThreadPoolExecutor(max_workers=6) as executor:  # 5个护盾检测 + 1个攻击力检测
+        # 使用线程池处理护盾检测
+        with ThreadPoolExecutor(max_workers=5) as executor:
             # 提交护盾检测任务
             shield_futures = [executor.submit(self._process_shield_image, img, debug_flag) for img in images]
-            
-            # 同时提交攻击力检测任务
-            atk_future = None
-            if last_screenshot:
-                atk_future = executor.submit(self.scan_enemy_ATK, last_screenshot, debug_flag)
             
             # 收集护盾检测结果
             all_positions = []
@@ -1292,37 +1316,31 @@ class GameManager:
                 if not any(abs(pos[0]-p[0])<40 and abs(pos[1]-p[1])<40 for p in final_shields):
                     final_shields.append(pos)
             
-            # 等待攻击力检测结果并过滤护盾
-            if atk_future and final_shields:
-                try:
-                    enemy_atk_positions = atk_future.result()
-                    
-                    # 根据攻击力检测结果过滤护盾
-                    if enemy_atk_positions:
-                        filtered_shields = []
-                        for shield_x, shield_y in final_shields:
-                            # 检查护盾x坐标是否与任何攻击力x坐标相差小于50
+            # 根据护盾结果筛选攻击力位置
+            if final_shields:
+                filtered_atk_positions = []
+                for atk_pos in enemy_atk_positions:
+                    atk_x, atk_y = atk_pos  # 解包坐标元组
+                    # 检查攻击力偏移后的x坐标（敌方随从坐标x轴）是否与任何护盾x坐标相差小于50
+                    should_include = True
+                    for shield_x, shield_y in final_shields:
+                        if abs(atk_x - shield_x) > 50:
                             should_include = False
-                            for atk_x in enemy_atk_positions:
-                                if abs(shield_x - atk_x) < 40:
-                                    should_include = True
-                                    break
-                            
-                            if should_include:
-                                filtered_shields.append((shield_x, shield_y))
-                        
-                        final_shields = filtered_shields
-                                    
-                except Exception as e:
-                    import logging
-                    logging.error(f"攻击力检测任务异常: {str(e)}")
+                            break
+                    
+                    if should_include:
+                        filtered_atk_positions.append(atk_pos)  # 保留完整坐标
+                
+                # 放回筛选后的enemy_atk_positions结果
+                enemy_atk_positions = filtered_atk_positions
         
         if debug_flag and images:
             timestamp = int(time.time() * 1000)
             os.makedirs("debug", exist_ok=True)
             cv2.imwrite(f"debug/shield_original_{timestamp}.png", images[0])
         
-        return final_shields
+        # 返回筛选后的enemy_atk_positions结果
+        return enemy_atk_positions
 
     def _process_shield_image(self, image, debug_flag):
         """处理护盾图像"""

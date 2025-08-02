@@ -485,10 +485,10 @@ class GameActions:
         current_round = self.device_state.current_round_count
         available_cost = min(10, current_round)  # 基础费用 = 当前回合数（最大10）
         
-        # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
-        if self.hand_manager.recognize_hand_shield_card():
-            self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-            return
+        # # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
+        # if self.hand_manager.recognize_hand_shield_card():
+        #     self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
+        #     return
         
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:
