@@ -1,0 +1,52 @@
+{
+  "adb_port": 5037,
+  "devices": [
+    {
+      "name": "MuMu模拟器-国服",
+      "serial": "127.0.0.1:16384",
+      "screenshot_deep_color": false,
+      "is_global": false
+    },
+    {
+      "name": "MuMu模拟器-国际服",
+      "serial": "127.0.0.1:16385",
+      "screenshot_deep_color": true,
+      "is_global": true
+    },
+    {
+      "name": "雷电模拟器-国服",
+      "serial": "127.0.0.1:5555",
+      "screenshot_deep_color": false,
+      "is_global": false
+    },
+    {
+      "name": "夜神模拟器-国际服",
+      "serial": "127.0.0.1:62001",
+      "screenshot_deep_color": true,
+      "is_global": true
+    }
+  ],
+  "game": {
+    "human_like_drag_duration_range": [0.10, 0.13]
+  },
+  "change_card_cost_threshold": 3,
+  "high_priority_cards": {
+    "蛇神之怒": {"priority": 3},
+    "无极猎人阿拉加维": {"priority": 2},
+    "命运黄昏奥丁": {"priority": 4},
+    "王断的天宫斯塔奇鸟姆": {"priority": 2},
+    "命运黄昏奥丁": {"priority": 3},
+    "勇武的堕天使奥莉薇": {"priority": 1},
+    "怨灵": {"priority": 3},
+    "触手撕咬": {"priority": 2},
+    "诅咒派对": {"priority": 1},
+    "白银骑士团团长艾蜜莉亚": {"priority": 3},
+    "剑士的斩击": {"priority": 1}
+  },
+  "evolve_priority_cards": {
+    "白银骑士团团长艾蜜莉亚": {"priority": 2},
+    "勇武的堕天使奥莉薇": {"priority": 1},
+    "无极猎人阿拉加维": {"priority": 3},
+    "王断的天宫斯塔奇鸟姆": {"priority": 1}
+  }
+} 

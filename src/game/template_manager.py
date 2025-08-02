@@ -16,11 +16,17 @@ logger = logging.getLogger(__name__)
 class TemplateManager:
     """模板管理器类"""
     
-    def __init__(self):
-        self.templates_dir = "templates"
+    def __init__(self, device_config: Optional[Dict[str, Any]] = None):
+        self.device_config = device_config or {}
+        # 根据设备配置选择模板目录
+        is_global = self.device_config.get('is_global', False)
+        self.templates_dir = "templates_global" if is_global else "templates"
         self.templates: Dict[str, Dict[str, Any]] = {}
         self.evolution_template = None
         self.super_evolution_template = None
+        
+        # 记录模板目录选择
+        logger.info(f"模板管理器初始化: 使用目录 '{self.templates_dir}'")
     
     def load_templates(self, config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         """加载所有模板"""

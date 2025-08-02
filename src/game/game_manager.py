@@ -35,7 +35,8 @@ class GameManager:
         self.device_state = device_state
         self.follower_manager = FollowerManager()
         self.cost_recognition = CostRecognition()
-        self.template_manager = TemplateManager()
+        # 传递设备配置给模板管理器
+        self.template_manager = TemplateManager(device_state.device_config)
         self.game_actions = GameActions(device_state)
         self.reader = get_easyocr_reader()
         
@@ -1258,13 +1259,13 @@ class GameManager:
         
         # 先获取一张截图进行攻击力检测
         try:  # 减少重试次数，因为只需要一张截图
-            time.sleep(0.5)
+            time.sleep(0.2)
             screenshot = self.device_state.take_screenshot()
             if screenshot is not None:
                 last_screenshot = screenshot
         except Exception as e:
             import logging
-            logging.error(f"攻击力检测任务异常: {str(e)}")
+            logging.error(f"截图异常: {str(e)}")
             return []
         
         if last_screenshot is None:
@@ -1280,12 +1281,12 @@ class GameManager:
                 
         except Exception as e:
             import logging
-            logging.error(f"攻击力检测任务异常: {str(e)}")
+            logging.error(f"敌方随从位置检测异常: {str(e)}")
             return []
         
         # 攻击力检测结果不为空，继续进行护盾检测
         for _ in range(4):
-            time.sleep(0.3)
+            time.sleep(0.2)
             screenshot = self.device_state.take_screenshot()
             if screenshot is None:
                 continue

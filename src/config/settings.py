@@ -48,7 +48,9 @@ DEFAULT_CONFIG = {
     "devices": [
         {
             "name": "MuMu模拟器",
-            "serial": "127.0.0.1:16384"
+            "serial": "127.0.0.1:16384",
+            "screenshot_deep_color": False,
+            "is_global": False
         }
     ],
     "game": {
@@ -77,7 +79,7 @@ DEFAULT_CONFIG = {
 
 # ============================= 拖动相关配置 =============================
 # 拖动总时间区间（秒），全局统一，(最小值, 最大值)
-HUMAN_LIKE_DRAG_DURATION_RANGE_DEFAULT = (0.15, 0.20)
+HUMAN_LIKE_DRAG_DURATION_RANGE_DEFAULT = (0.12, 0.16)
 
 def get_human_like_drag_duration_range():
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'config.json')

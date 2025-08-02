@@ -22,13 +22,20 @@ if TYPE_CHECKING:
 class DeviceState:
     """管理每个设备的状态"""
     
-    def __init__(self, serial: str, config: Dict[str, Any]):
+    def __init__(self, serial: str, config: Dict[str, Any], device_config: Optional[Dict[str, Any]] = None):
         self.serial = serial
         self.config = config
+        self.device_config = device_config or {}
         
         # 脚本运行状态
         self.script_running = True
         self.script_paused = False
+        
+        # 设置日志器（必须在其他初始化之前）
+        self.logger = self._setup_logger()
+        
+        # 初始化截图方法选择
+        self._init_screenshot_method()
         
         # 对战状态
         self.current_round_count = 1
@@ -75,11 +82,25 @@ class DeviceState:
         # 随从管理器 - 将在GameManager初始化时设置
         self.follower_manager: Optional[Any] = None
         
-        # 设置日志器
-        self.logger = self._setup_logger()
-        
         # 加载历史统计数据
         self.load_round_statistics()
+    
+    def _init_screenshot_method(self):
+        """初始化截图方法选择，只在程序启动时执行一次"""
+        try:
+            # 从设备配置中获取screenshot_deep_color值，默认为False
+            screenshot_deep_color = self.device_config.get('screenshot_deep_color', False)
+            
+            if screenshot_deep_color:
+                self.logger.info("初始化截图方法: 使用深色截图方法")
+                self._screenshot_method = self.take_screenshot_MuMugblobe
+            else:
+                self.logger.info("初始化截图方法: 使用普通截图方法")
+                self._screenshot_method = self.take_screenshot_normal
+                
+        except Exception as e:
+            self.logger.error(f"读取设备配置失败，使用默认截图方法: {str(e)}")
+            self._screenshot_method = self.take_screenshot_normal
     
     def _setup_logger(self) -> logging.Logger:
         """为每个设备创建独立的日志器"""
@@ -111,10 +132,53 @@ class DeviceState:
         return logger
 
     def take_screenshot(self) -> Optional[Any]:
+        """
+        执行截图，使用初始化时选择的截图方法
+        """
+        return self._screenshot_method()
+
+    def take_screenshot_normal(self) -> Optional[Any]:
         """获取设备截图"""
         if self.adb_device is None:
             return None
         return self.adb_device.screenshot()
+
+    def take_screenshot_MuMugblobe(self) -> Optional[Any]:
+        """获取设备截图"""
+        if self.adb_device is None:
+            return None
+
+        try:
+            screenshot = self.adb_device.screenshot()
+            if screenshot is not None:
+                # 转换为numpy数组进行亮度调整
+                import numpy as np
+                import cv2
+                
+                # 将PIL图像转换为numpy数组
+                img_array = np.array(screenshot)
+                
+                # 转换为BGR格式（OpenCV默认格式）
+                if len(img_array.shape) == 3:
+                    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                else:
+                    img_bgr = img_array
+                
+                # 提高亮度40
+                brightness = 40
+                img_brightened = cv2.add(img_bgr, brightness)
+                
+                # 转换回RGB格式
+                img_rgb = cv2.cvtColor(img_brightened, cv2.COLOR_BGR2RGB)
+                
+                # 转换回PIL图像
+                from PIL import Image
+                return Image.fromarray(img_rgb)
+            else:
+                return None
+        except Exception as e:
+            self.logger.error(f"截图失败: {str(e)}")
+            return None
 
     def save_screenshot(self, screenshot, scene="general") -> Optional[str]:
         """保存截图并添加场景标签"""

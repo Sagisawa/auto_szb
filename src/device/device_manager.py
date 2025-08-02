@@ -46,7 +46,7 @@ class DeviceManager:
                 continue
             
             # 创建设备状态
-            device_state = DeviceState(serial, self.config_manager.config)
+            device_state = DeviceState(serial, self.config_manager.config, device_config)
             self.device_states[serial] = device_state
             
             # 启动设备工作线程

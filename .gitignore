@@ -52,11 +52,25 @@ round_stats_*.json
 
 # 调试文件
 debug/
+
+# 图片文件（但允许模板文件夹中的图片）
 *.png
 *.jpg
 *.jpeg
 *.gif
 *.bmp
+
+# 允许模板文件夹中的图片文件
+!templates/**/*.png
+!templates/**/*.jpg
+!templates/**/*.jpeg
+!templates/**/*.gif
+!templates/**/*.bmp
+!templates_global/**/*.png
+!templates_global/**/*.jpg
+!templates_global/**/*.jpeg
+!templates_global/**/*.gif
+!templates_global/**/*.bmp
 
 # 临时文件
 *.tmp
