@@ -1284,8 +1284,8 @@ class GameManager:
             return []
         
         # 攻击力检测结果不为空，继续进行护盾检测
-        for _ in range(5):
-            time.sleep(0.2)
+        for _ in range(4):
+            time.sleep(0.3)
             screenshot = self.device_state.take_screenshot()
             if screenshot is None:
                 continue
@@ -1315,32 +1315,26 @@ class GameManager:
             for pos in all_positions:
                 if not any(abs(pos[0]-p[0])<40 and abs(pos[1]-p[1])<40 for p in final_shields):
                     final_shields.append(pos)
-            
-            # 根据护盾结果筛选攻击力位置
-            if final_shields:
-                filtered_atk_positions = []
-                for atk_pos in enemy_atk_positions:
-                    atk_x, atk_y = atk_pos  # 解包坐标元组
-                    # 检查攻击力偏移后的x坐标（敌方随从坐标x轴）是否与任何护盾x坐标相差小于50
-                    should_include = True
-                    for shield_x, shield_y in final_shields:
-                        if abs(atk_x - shield_x) > 50:
-                            should_include = False
-                            break
-                    
-                    if should_include:
-                        filtered_atk_positions.append(atk_pos)  # 保留完整坐标
-                
-                # 放回筛选后的enemy_atk_positions结果
-                enemy_atk_positions = filtered_atk_positions
         
-        if debug_flag and images:
-            timestamp = int(time.time() * 1000)
-            os.makedirs("debug", exist_ok=True)
-            cv2.imwrite(f"debug/shield_original_{timestamp}.png", images[0])
+        shield_targets=[]
         
-        # 返回筛选后的enemy_atk_positions结果
-        return enemy_atk_positions
+        # 过滤final_shields，只保留与enemy_atk_positions中任意点x轴距离小于50像素的坐标
+        for shield_pos in final_shields:
+            shield_x = shield_pos[0]
+            # 检查是否与任意攻击力位置的x轴距离小于50像素
+            for atk_pos in enemy_atk_positions:
+                atk_x = atk_pos[0]
+                if abs(shield_x - atk_x) < 50:
+                    shield_targets.append(shield_pos)
+                    break  # 找到一个匹配的攻击力位置就足够了
+        
+        # 按x轴排序，只返回x轴最小的坐标,同时校准y轴坐标
+        if shield_targets:
+            shield_targets.sort(key=lambda pos: pos[0])  # 按x坐标排序
+            target_x,target_y=shield_targets[0]
+            shield_targets = [(target_x,227+random.randint(-10,10))]  # 只保留x轴最小的坐标
+
+        return shield_targets
 
     def _process_shield_image(self, image, debug_flag):
         """处理护盾图像"""
