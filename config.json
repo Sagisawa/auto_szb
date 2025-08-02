@@ -3,7 +3,9 @@
   "devices": [
     {
       "name": "MuMu模拟器",
-      "serial": "127.0.0.1:16384"
+      "serial": "127.0.0.1:16384",
+      "screenshot_deep_color":false,
+       "is_global"::false
     }
   ],
   "game": {
