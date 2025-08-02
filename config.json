@@ -14,17 +14,19 @@
     "蛇神之怒": {"priority": 3},
     "无极猎人阿拉加维": {"priority": 2},
     "命运黄昏奥丁": {"priority": 4},
-    "鸣咽的圣骑士维尔伯特": {"priority": 2},
-    "纯白圣女贞德": {"priority": 1},
-    "夭之守护神埃忒耳": {"priority": 1},
+    "王断的天宫斯塔奇鸟姆": {"priority": 2},
+    "命运黄昏奥丁": {"priority": 3},
+    "勇武的堕天使奥莉薇": {"priority": 1},
     "怨灵": {"priority": 3},
-    "水之守护神萨蕾法": {"priority": 3},
-    "诅咒派对": {"priority": 1}
+    "触手撕咬": {"priority": 2},
+    "诅咒派对": {"priority": 1},
+    "白银骑士团团长艾蜜莉亚": {"priority": 3},
+    "剑士的斩击": {"priority": 1}
   },
   "evolve_priority_cards": {
-    "鸣咽的圣骑士维尔伯特": {"priority": 2},
-    "夭之守护神埃忒耳": {"priority": 1},
+    "白银骑士团团长艾蜜莉亚": {"priority": 2},
+    "勇武的堕天使奥莉薇": {"priority": 1},
     "无极猎人阿拉加维": {"priority": 3},
-    "水之守护神萨蕾法": {"priority": 3}
+    "王断的天宫斯塔奇鸟姆": {"priority": 1}
   }
 }

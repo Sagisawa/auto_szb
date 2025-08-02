@@ -78,7 +78,6 @@ class CardPlaySpecialActions:
                 result = self._handle_shield_or_highest_hp_noenemy_retrun_point_target(card_name, center_x, center_y, target_x)
                 if result is False:
                     # 特殊处理：不消耗费用，且需要从手牌中移除
-                    self.device_state.logger.info(f"剑士的斩击没有目标，设置特殊标记：不消耗费用，需要从手牌移除")
                     self._should_not_consume_cost = True
                     self._should_remove_from_hand = True
                     return False

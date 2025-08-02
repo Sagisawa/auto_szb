@@ -234,7 +234,13 @@ class DeviceManager:
                     # 检测到"决斗"按钮，表示新对战开始
                     device_state.logger.debug(f"检测到决斗按钮 - 当前in_match: {device_state.in_match}")
                     device_state.start_new_match()
+                    # 计算中心点并点击
+                    center_x = max_loc[0] + template_info['w'] // 2
+                    center_y = max_loc[1] + template_info['h'] // 2
+                    device_state.u2_device.click(center_x + random.randint(-2, 2), center_y + random.randint(-2, 2))
+                    time.sleep(3)
                     device_state.logger.debug(f"调用start_new_match后 - in_match: {device_state.in_match}")
+                    continue
 
                 if key == 'decision':
                     game_manager.game_actions._detect_change_card()

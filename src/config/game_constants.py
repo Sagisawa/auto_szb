@@ -8,16 +8,20 @@
 # 敌方随从血量检测区域 (左上角x, 左上角y, 右下角x, 右下角y)
 ENEMY_HP_REGION = (249, 249, 1015, 310)
 
+# 敌方随从攻击力检测区域 (左上角x, 左上角y, 右下角x, 右下角y)
+ENEMY_ATK_REGION = (263, 297, 1015, 307)
+
 # 我方随从检测区域
 OUR_FOLLOWER_REGION = (176, 307, 1064, 334)  # 疾驰/突进随从区域
-OUR_HP_REGION = (263, 466, 1015, 480)  # 我方随从血量区域
+OUR_ATK_REGION = (263, 466, 1015, 480)  # 我方随从血量区域
+OUR_HP_REGION = (263, 466, 1015, 480)
 
 # 敌方护盾检测区域 (左上角x, 左上角y, 右下角x, 右下角y)
 ENEMY_SHIELD_REGION = (164, 136, 1096, 228)
 
 # 敌方随从位置偏移
 ENEMY_FOLLOWER_OFFSET_X = -50  # 从血量中心到随从中心的X偏移
-ENEMY_FOLLOWER_OFFSET_Y = -63  # 从血量中心到随从中心的Y偏移
+ENEMY_FOLLOWER_OFFSET_Y = -70  # 从血量中心到随从中心的Y偏移
 ENEMY_HP_REGION_OFFSET_X = 249  # 敌方血量区域X偏移
 ENEMY_HP_REGION_OFFSET_Y = 249  # 敌方血量区域Y偏移
 
@@ -49,6 +53,10 @@ OCR_CROP_HALF_SIZE = OCR_CROP_SIZE // 2  # 裁剪区域的一半大小
 # 敌方随从血量颜色（红色）
 ENEMY_HP_HSV = {
     "red": [0, 111, 0, 7, 207, 255]
+}
+
+ENEMY_ATK_HSV = {
+    "blue": [87, 124, 84, 120, 255, 255]
 }
 
 # 我方随从状态颜色
@@ -198,12 +206,6 @@ RESOLUTION_720P = {
     "scale_factor": 1.0
 }
 
-# 1080p分辨率参数
-RESOLUTION_1080P = {
-    "width": 1920,
-    "height": 1080,
-    "scale_factor": 1.5
-}
 
 # ============================= 时间参数 =============================
 

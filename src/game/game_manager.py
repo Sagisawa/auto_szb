@@ -3,6 +3,7 @@
 实现核心游戏逻辑和操作
 """
 
+from re import T
 import cv2
 from easyocr.craft import F
 import numpy as np
@@ -18,10 +19,10 @@ from src.game.game_actions import GameActions
 from src.utils.gpu_utils import get_easyocr_reader
 from src.config.game_constants import (
     ENEMY_HP_REGION, ENEMY_HP_HSV, ENEMY_FOLLOWER_Y_ADJUST, ENEMY_FOLLOWER_Y_RANDOM,
-    OUR_FOLLOWER_REGION, OUR_HP_REGION, OUR_FOLLOWER_HSV,
+    OUR_FOLLOWER_REGION, OUR_ATK_REGION, OUR_FOLLOWER_HSV,
     ENEMY_HP_REGION_OFFSET_X, ENEMY_HP_REGION_OFFSET_Y,
     ENEMY_FOLLOWER_OFFSET_X, ENEMY_FOLLOWER_OFFSET_Y,
-    OCR_CROP_SIZE, OCR_CROP_HALF_SIZE, ENEMY_SHIELD_REGION
+    ENEMY_ATK_REGION, OCR_CROP_HALF_SIZE, ENEMY_SHIELD_REGION,ENEMY_ATK_HSV
 )
 
 logger = logging.getLogger(__name__)
@@ -41,139 +42,72 @@ class GameManager:
         # 设置设备状态中的随从管理器
         device_state.follower_manager = self.follower_manager
 
-    # def scan_enemy_HP(self, debug_flag=True):
+    def scan_enemy_ATK(self,screenshot,debug_flag=False):
+        """扫描敌方攻击力数值，返回全局x坐标列表"""
+        enemy_atk_positions = []
+        
+        # 确保debug目录存在
+        if debug_flag:
+            os.makedirs("debug", exist_ok=True)
 
-    #     import time
-    #     HUZHI=123
+        region_blue = screenshot.crop(ENEMY_ATK_REGION)
+        region_blue_np = np.array(region_blue)
+        region_blue_cv = cv2.cvtColor(region_blue_np, cv2.COLOR_RGB2BGR)
+        hsv_blue = cv2.cvtColor(region_blue_cv, cv2.COLOR_BGR2HSV)
+        settings = ENEMY_ATK_HSV
+        lower_blue = np.array(settings["blue"][:3])
+        upper_blue = np.array(settings["blue"][3:])
+        blue_mask = cv2.inRange(hsv_blue, lower_blue, upper_blue)
 
-    #     screenshot=self.device_state.take_screenshot()
+        kernel = np.ones((1, 1), np.uint8)
+        blue_eroded = cv2.erode(cv2.dilate(blue_mask, kernel, iterations=1), kernel, iterations=1)
+        blue_contours, _ = cv2.findContours(blue_eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # 创建用于调试的图像
+        if debug_flag:
+            debug_img = region_blue_cv.copy()
+        
+        for cnt in blue_contours:
+            rect = cv2.minAreaRect(cnt)
+            (x, y), (w, h), angle = rect
+            area = cv2.contourArea(cnt)
+            max_dim = max(w, h)
+            min_dim = min(w, h)
+            center_x, center_y = rect[0]
+            
+            if 15 < max_dim < 40 and 3 < min_dim < 15 and area < 200:
+                # 区域截图中敌方随从的中心位置
+                in_card_center_x_full = center_x + 50
+                in_card_center_y_full = center_y - 46
+                # 全局中敌方随从中心位置
+                center_x_full = in_card_center_x_full + 263
+                center_y_full = in_card_center_y_full + 297
+                
+                # 添加到结果列表
+                enemy_atk_positions.append(center_x_full)
+                
+                # Debug 标注
+                if debug_flag:
+                    # 画中心点
+                    cv2.circle(debug_img, (int(center_x), int(center_y)), 5, (0, 0, 255), -1)
+                    # 画外接矩形
+                    box = cv2.boxPoints(rect).astype(int)
+                    cv2.drawContours(debug_img, [box], 0, (0, 255, 0), 2)
+                    # 添加标注文字
+                    label = f"W:{w:.1f} H:{h:.1f} Area:{area:.0f}"
+                    cv2.putText(debug_img, label, (int(center_x), int(center_y)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        
+        # 保存debug图像
+        if debug_flag:
+            timestamp = int(time.time() * 1000)
+            cv2.imwrite(f"debug/enemy_ATK_debug_{timestamp}.png", debug_img)
+            cv2.imwrite(f"debug/enemy_ATK_mask_{timestamp}.png", blue_eroded)
 
-
-    #     region_red = screenshot.crop(ENEMY_HP_REGION)
-    #     region_red_np = np.array(region_red)
-    #     region_red_cv = cv2.cvtColor(region_red_np, cv2.COLOR_RGB2BGR)
-    #     hsv_red = cv2.cvtColor(region_red_cv, cv2.COLOR_BGR2HSV)
-
-    #     OUR_HP_REGION = (191,422,1040,484)
-    #     region_red1 = screenshot.crop(OUR_HP_REGION)
-    #     region_red_np1 = np.array(region_red1)
-    #     region_red_cv1 = cv2.cvtColor(region_red_np1, cv2.COLOR_RGB2BGR)
-    #     hsv_red1 = cv2.cvtColor(region_red_cv1, cv2.COLOR_BGR2HSV)
-
-    #     # HSV范围设置
-    #     settings = ENEMY_HP_HSV
-
-    #     # 创建红色掩膜
-    #     lower_red = np.array(settings["red"][:3])
-    #     upper_red = np.array(settings["red"][3:])
-    #     red_mask = cv2.inRange(hsv_red, lower_red, upper_red)
+        return enemy_atk_positions 
 
         
-    #     lower_red1 = np.array(settings["red"][:3])
-    #     upper_red1 = np.array(settings["red"][3:])
-    #     red_mask1 = cv2.inRange(hsv_red1, lower_red1, upper_red1)   
-
-    #     # 形态学操作优化
-    #     kernel = np.ones((4, 4), np.uint8)
-    #     red_eroded = cv2.erode((cv2.dilate(red_mask, kernel, iterations=1)), kernel, iterations=1)
-    #     red_eroded1 = cv2.erode((cv2.dilate(red_mask1, kernel, iterations=1)), kernel, iterations=1)
-
-    #     # 查找轮廓
-    #     red_contours, _ = cv2.findContours(red_eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #     red_contours1, _ = cv2.findContours(red_eroded1, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    #     if debug_flag:
-    #         draw_img = region_red_cv.copy()
-    #         draw_img1 = region_red_cv1.copy()
-
-    #     for i, cnt in enumerate(red_contours):
-    #         # 获取最小外接矩形
-    #         rect = cv2.minAreaRect(cnt)
-    #         (x, y), (w, h), angle = rect
-    #         area = cv2.contourArea(cnt)
-    #         box = cv2.boxPoints(rect)
-    #         box = box.astype(int)  # 保持为np.ndarray，不能tolist
-    #         # 检查尺寸是否在合理范围内
-    #         min_dim = min(w, h)
-    #         if min_dim > 15 and 5000 > area > 1000:
-    #             # 原始中心点 (偏移前)
-    #             center_x, center_y = rect[0]
-    #             # 以中心点为中心，创建底为24，长为33的ROI区域
-    #             roi_w, roi_h = 24, 33
-    #             x1 = int(center_x - roi_w // 2)
-    #             y1 = int(center_y - roi_h // 2)
-    #             x2 = int(center_x + roi_w // 2)
-    #             y2 = int(center_y + roi_h // 2)
-    #             # 边界检查
-    #             x1 = max(0, x1)
-    #             y1 = max(0, y1)
-    #             x2 = min(region_red_cv.shape[1], x2)
-    #             y2 = min(region_red_cv.shape[0], y2)
-    #             roi_img = region_red_cv[y1:y2, x1:x2]
-    #             # 灰度化
-    #             roi_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
-    #             # 二值化
-    #             _, roi_bin = cv2.threshold(roi_gray, HUZHI, 255, cv2.THRESH_BINARY)
-    #             # 轮廓提取
-    #             contours, _ = cv2.findContours(roi_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #             # 保存图片到debug_HP文件夹
-    #             if debug_flag:
-    #                 os.makedirs("debug_HP", exist_ok=True)
-    #                 timestamp = int(time.time() * 1000)
-    #                 bin_filename = f"debug_HP/enemy_HP_roi_bin_{timestamp}_{i}.png"
-    #                 cv2.imwrite(bin_filename, roi_bin)
-    #                 # 在draw_img上画外接矩形、中心点、长宽面积
-    #                 cv2.drawContours(draw_img, [box], 0, (0, 255, 0), 2)  # 绿色外接矩形
-    #                 cv2.circle(draw_img, (int(center_x), int(center_y)), 4, (0, 0, 255), -1)  # 红色中心点
-    #                 cv2.putText(draw_img, f"{w:.1f}x{h:.1f} A:{int(area)}", (int(center_x), int(center_y)-10),
-    #                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-
-    #     for i, cnt in enumerate(red_contours1):
-    #         # 获取最小外接矩形
-    #         rect = cv2.minAreaRect(cnt)
-    #         (x, y), (w, h), angle = rect
-    #         area = cv2.contourArea(cnt)
-    #         box = cv2.boxPoints(rect)
-    #         box = box.astype(int)  # 保持为np.ndarray，不能tolist
-    #         # 检查尺寸是否在合理范围内
-    #         min_dim = min(w, h)
-    #         if min_dim > 15 and 5000 > area > 1000:
-    #             # 原始中心点 (偏移前)
-    #             center_x, center_y = rect[0]
-    #             # 以中心点为中心，创建底为24，长为33的ROI区域
-    #             roi_w, roi_h = 24, 33
-    #             x1 = int(center_x - roi_w // 2)
-    #             y1 = int(center_y - roi_h // 2)
-    #             x2 = int(center_x + roi_w // 2)
-    #             y2 = int(center_y + roi_h // 2)
-    #             # 边界检查
-    #             x1 = max(0, x1)
-    #             y1 = max(0, y1)
-    #             x2 = min(region_red_cv1.shape[1], x2)
-    #             y2 = min(region_red_cv1.shape[0], y2)
-    #             roi_img = region_red_cv1[y1:y2, x1:x2]
-    #             # 灰度化
-    #             roi_gray = cv2.cvtColor(roi_img, cv2.COLOR_BGR2GRAY)
-    #             # 二值化
-    #             _, roi_bin = cv2.threshold(roi_gray, HUZHI, 255, cv2.THRESH_BINARY)
-    #             # 轮廓提取
-    #             contours, _ = cv2.findContours(roi_bin, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    #             # 保存图片到debug_HP文件夹
-    #             if debug_flag:
-    #                 os.makedirs("debug_HP", exist_ok=True)
-    #                 timestamp = int(time.time() * 1000)
-    #                 bin_filename = f"debug_HP/our_HP_roi_bin_{timestamp}_{i}.png"
-    #                 cv2.imwrite(bin_filename, roi_bin)
-    #                 # 在draw_img上画外接矩形、中心点、长宽面积
-    #                 cv2.drawContours(draw_img1, [box], 0, (0, 255, 0), 2)  # 绿色外接矩形
-    #                 cv2.circle(draw_img1, (int(center_x), int(center_y)), 4, (0, 0, 255), -1)  # 红色中心点
-    #                 cv2.putText(draw_img1, f"{w:.1f}x{h:.1f} A:{int(area)}", (int(center_x), int(center_y)-10),
-    #                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-    #     # 保存整张带标注的图片
-    #     if debug_flag:
-    #         timestamp = int(time.time() * 1000)
-    #         cv2.imwrite(f"debug_HP/region_red_draw_{timestamp}.png", draw_img)
-    #         cv2.imwrite(f"debug_HP/region_red_draw1_{timestamp}.png", draw_img1)
+        
 
     
     def scan_enemy_followers(self, screenshot, debug_flag=False):
@@ -275,6 +209,11 @@ class GameManager:
                     cv2.circle(contour_debug, (int(center_x), int(center_y)), 5, (0, 255, 255), -1)
                     cv2.putText(contour_debug, f"HP: {hp_value}", (int(center_x - 20), int(center_y - 20)),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                    # 绘制长宽和面积信息
+                    cv2.putText(contour_debug, f"W: {w:.1f} H: {h:.1f}", (int(center_x - 20), int(center_y + 15)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
+                    cv2.putText(contour_debug, f"Area: {area:.0f}", (int(center_x - 20), int(center_y + 30)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
         if debug_flag:
             timestamp1 = int(time.time() * 1000)
@@ -316,7 +255,7 @@ class GameManager:
             region_color = shot.crop(OUR_FOLLOWER_REGION)
             region_color_np = np.array(region_color)
             region_color_cv = cv2.cvtColor(region_color_np, cv2.COLOR_RGB2BGR)
-            region_blue = shot.crop(OUR_HP_REGION)
+            region_blue = shot.crop(OUR_ATK_REGION)
             region_blue_np = np.array(region_blue)
             region_blue_cv = cv2.cvtColor(region_blue_np, cv2.COLOR_RGB2BGR)
             if debug_flag:
@@ -359,12 +298,7 @@ class GameManager:
             yellow1_eroded = cv2.erode(cv2.dilate(yellow1_mask, kernel, iterations=1), kernel, iterations=1)
             yellow2_eroded = cv2.erode(cv2.dilate(yellow2_mask, kernel, iterations=1), kernel, iterations=1)
             blue_eroded = cv2.erode(cv2.dilate(blue_mask, kernel, iterations=1), kernel, iterations=1)
-            # green_eroded = green_mask
-            # green2_eroded = green2_mask
-            # yellow1_eroded = yellow1_mask
-            # yellow2_eroded = yellow2_mask
-            # blue_eroded = blue_mask
-            # 并发查找轮廓
+
             from concurrent.futures import ThreadPoolExecutor
             def find_contours(mask):
                 return cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
@@ -433,7 +367,7 @@ class GameManager:
                             debug_cy = int(cy) + 30  # 向下偏移30像素
                             cv2.circle(debug_img_color, (debug_cx, debug_cy), 7, (0, 255, 255), 2)
                     continue  # 分水岭分割后不再走后续大随从分左右中心逻辑
-                if  150 > max_dim > 90 or 230 > max_dim > 200:
+                if  230 > max_dim > 80:
                     if max_dim > 230:
                         box = cv2.boxPoints(rect)
                         box = box.astype(np.int32)
@@ -621,7 +555,7 @@ class GameManager:
                             debug_cy = int(cy) + 30  # 向下偏移30像素
                             cv2.circle(debug_img_color, (debug_cx, debug_cy), 7, (0, 255, 255), 2)
                     continue  # 分水岭后不再走后续逻辑
-                if 150 > max_dim > 90 or 230 > max_dim > 200:
+                if 230 > max_dim > 80:
                     center_x, center_y = rect[0]
                     center_x_full = center_x + 176
                     center_y_full = center_y + 295
@@ -744,7 +678,7 @@ class GameManager:
                     in_card_center_y_full = center_y - 46
                     #全局中我方随从中心位置
                     center_x_full = in_card_center_x_full + 263  
-                    center_y_full = in_card_center_y_full + 420
+                    center_y_full = in_card_center_y_full + 466#420
                     # 检查是否在绿色中心点或黄色中心点x轴50像素以内
                     is_near_green_or_yellow = False
                     
@@ -1313,41 +1247,81 @@ class GameManager:
 
         return result_with_name
 
-    def scan_shield_targets(self, debug_flag=False):
+    def scan_shield_targets(self,debug_flag=False):
         """扫描护盾（多线程并发处理）"""
         from concurrent.futures import ThreadPoolExecutor, as_completed
         shield_targets = []
         images = []
-        for _ in range(3):
-            time.sleep(0.3)
+        last_screenshot = None
+        
+        for _ in range(5):
+            time.sleep(0.2)
             screenshot = self.device_state.take_screenshot()
             if screenshot is None:
                 continue
+            last_screenshot = screenshot  # 保存最后一张截图用于攻击力检测
             region = screenshot.crop(ENEMY_SHIELD_REGION)
             bgr_image = cv2.cvtColor(np.array(region), cv2.COLOR_RGB2BGR)
             images.append(bgr_image)
+        
         if not images:
             return shield_targets
-        all_positions = []
-        timestamp = int(time.time() * 1000)
-        # 并发处理每张图的护盾检测
-        with ThreadPoolExecutor(max_workers=min(3, len(images))) as executor:
-            futures = [executor.submit(self._process_shield_image, img, debug_flag) for img in images]
-            for future in as_completed(futures):
+            
+        # 使用更大的线程池，同时处理护盾检测和攻击力检测
+        with ThreadPoolExecutor(max_workers=6) as executor:  # 5个护盾检测 + 1个攻击力检测
+            # 提交护盾检测任务
+            shield_futures = [executor.submit(self._process_shield_image, img, debug_flag) for img in images]
+            
+            # 同时提交攻击力检测任务
+            atk_future = None
+            if last_screenshot:
+                atk_future = executor.submit(self.scan_enemy_ATK, last_screenshot, debug_flag)
+            
+            # 收集护盾检测结果
+            all_positions = []
+            for future in as_completed(shield_futures):
                 try:
                     all_positions.extend(future.result())
                 except Exception as e:
                     import logging
                     logging.error(f"护盾检测并发任务异常: {str(e)}")
-        # 合并去重（中心点距离小于40像素视为同一护盾）
-        final_shields = []
-        for pos in all_positions:
-            if not any(abs(pos[0]-p[0])<40 and abs(pos[1]-p[1])<40 for p in final_shields):
-                final_shields.append(pos)
+            
+            # 合并去重（中心点距离小于40像素视为同一护盾）
+            final_shields = []
+            for pos in all_positions:
+                if not any(abs(pos[0]-p[0])<40 and abs(pos[1]-p[1])<40 for p in final_shields):
+                    final_shields.append(pos)
+            
+            # 等待攻击力检测结果并过滤护盾
+            if atk_future and final_shields:
+                try:
+                    enemy_atk_positions = atk_future.result()
+                    
+                    # 根据攻击力检测结果过滤护盾
+                    if enemy_atk_positions:
+                        filtered_shields = []
+                        for shield_x, shield_y in final_shields:
+                            # 检查护盾x坐标是否与任何攻击力x坐标相差小于50
+                            should_include = False
+                            for atk_x in enemy_atk_positions:
+                                if abs(shield_x - atk_x) < 40:
+                                    should_include = True
+                                    break
+                            
+                            if should_include:
+                                filtered_shields.append((shield_x, shield_y))
+                        
+                        final_shields = filtered_shields
+                                    
+                except Exception as e:
+                    import logging
+                    logging.error(f"攻击力检测任务异常: {str(e)}")
+        
         if debug_flag and images:
             timestamp = int(time.time() * 1000)
             os.makedirs("debug", exist_ok=True)
             cv2.imwrite(f"debug/shield_original_{timestamp}.png", images[0])
+        
         return final_shields
 
     def _process_shield_image(self, image, debug_flag):
@@ -1365,10 +1339,26 @@ class GameManager:
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, np.array([23, 46, 30]), np.array([89, 255, 255]))
 
-        # 形态学操作
-        kernel = np.ones((1, 1), np.uint8)
-        mask = cv2.erode(cv2.dilate(mask, kernel, iterations=1), kernel, iterations=1)
+        # # 形态学操作 - 使用椭圆核，分别进行腐蚀和膨胀（新方法）
+        # kernel_size = 2  # 椭圆核大小
+        # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        
+        # # 分别进行腐蚀和膨胀操作
+        # erode_iterations = 1
+        # dilate_iterations = 1
+        
+        # # 先进行腐蚀操作
+        # if erode_iterations > 0:
+        #     mask = cv2.erode(mask, kernel, iterations=erode_iterations)
+        
+        # # 再进行膨胀操作
+        # if dilate_iterations > 0:
+        #     mask = cv2.dilate(mask, kernel, iterations=dilate_iterations)
 
+        
+        # 形态学操作
+        kernel = np.ones((1,1 ), np.uint8)
+        mask = cv2.erode(cv2.dilate(mask, kernel, iterations=1), kernel, iterations=1)
         # 查找轮廓
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -1378,15 +1368,13 @@ class GameManager:
             min_dim = min(w, h)
             max_dim = max(w, h)
             
-            if  (120>max_dim >90 and 65>min_dim>55 and area > 900) or (154>max_dim >147 and 122>min_dim>115 and 4000 > area > 3000):
+            if  (140>max_dim >80 and 72>min_dim>55 and area > 700) :
                 cx, cy = x + w // 2, y + h // 2
                 # 自动转换为全屏坐标
                 global_cx = cx + offset_x
                 global_cy = cy + offset_y
-                if 249 < global_cx < 1042 and 173 < global_cy < 275:
-                    shield_targets.append((global_cx, global_cy))
-
-                    if debug_flag:
+                shield_targets.append((global_cx, global_cy))
+                if debug_flag:
                         # 创建调试图像
                         debug_img = image.copy()
                         logging.info(f"debug_img shape: {debug_img.shape}, dtype: {debug_img.dtype}")
@@ -1400,7 +1388,7 @@ class GameManager:
 
                         # 宽高面积标注
                         label = f"W:{w} H:{h} Area:{area:.0f}"
-                        cv2.putText(debug_img, label, (x, y - 20),
+                        cv2.putText(debug_img, label, (x, y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
                         # 保存调试图像
