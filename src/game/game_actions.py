@@ -611,6 +611,8 @@ class GameActions:
         max_retry_attempts = 2  # 最多重试次数
         total_cost_used = 0
         retry_count = 0
+        # 当前回合需要忽略的卡牌（如剑士的斩击在没有敌方随从时）
+        self._current_round_ignored_cards = set()
         self.device_state.logger.info(f"当前回合：{current_round}，可用费用: {available_cost}")
 
         hand_manager = self.hand_manager
@@ -623,10 +625,16 @@ class GameActions:
         from src.config.card_priorities import get_high_priority_cards, get_card_priority
         high_priority_cards_cfg = get_high_priority_cards()
         high_priority_names = set(high_priority_cards_cfg.keys())
+        
+        # 过滤掉当前回合需要忽略的卡牌
+        if self._current_round_ignored_cards:
+            self.device_state.logger.info(f"过滤忽略列表中的卡牌: {list(self._current_round_ignored_cards)}")
+        filtered_cards = [c for c in cards if c.get('name', '') not in self._current_round_ignored_cards]
+        
         # 高优先级卡牌
-        priority_cards = [c for c in cards if c.get('name', '') in high_priority_names]
+        priority_cards = [c for c in filtered_cards if c.get('name', '') in high_priority_names]
         # 普通卡牌
-        normal_cards = [c for c in cards if c.get('name', '') not in high_priority_names]
+        normal_cards = [c for c in filtered_cards if c.get('name', '') not in high_priority_names]
         # 高优先级卡牌排序：先按priority（数字小优先），再按费用从高到低
         priority_cards.sort(key=lambda x: (get_card_priority(x.get('name', '')), -x.get('cost', 0)))
         # 普通卡牌按费用从高到低排序
@@ -662,11 +670,38 @@ class GameActions:
             cost = card_to_play.get('cost', 0)
             self.device_state.logger.info(f"打出卡牌: {name} (费用: {cost})")
             self._play_single_card(card_to_play)
+            
+            # 处理额外的费用奖励
+            extra_cost_bonus = getattr(self, '_current_extra_cost_bonus', 0)
+            if extra_cost_bonus > 0:
+                remain_cost += extra_cost_bonus
+                # 清除额外费用奖励，避免重复使用
+                self._current_extra_cost_bonus = 0
+            
             # 记录最后打出的卡牌名称，用于特殊逻辑判断
             self._last_played_card = name
-            if cost > 0:
+            
+            # 检查是否应该消耗费用
+            should_not_consume_cost = getattr(self, '_should_not_consume_cost', False)
+            if should_not_consume_cost:
+                self.device_state.logger.info(f"特殊卡牌 {name} 未消耗费用")
+                # 清除不消耗费用的标记，避免影响后续卡牌
+                self._should_not_consume_cost = False
+            elif cost > 0:
                 remain_cost -= cost
                 total_cost_used += cost
+            
+            # 检查是否需要从手牌中移除
+            should_remove_from_hand = getattr(self, '_should_remove_from_hand', False)
+            if should_remove_from_hand:
+                self.device_state.logger.info(f"特殊卡牌 {name} 已加入当前回合忽略列表")
+                # 将卡牌加入当前回合忽略列表
+                self._current_round_ignored_cards.add(name)
+                self.device_state.logger.info(f"当前忽略列表: {list(self._current_round_ignored_cards)}")
+                # 清除需要移除的标记，避免影响后续卡牌
+                self._should_remove_from_hand = False
+                # 不从planned_cards中移除，因为这张卡实际上没有被打出
+                continue  # 跳过后续的手牌更新逻辑
             planned_cards.remove(card_to_play)
             if planned_cards and (remain_cost > 0 or any(c.get('cost', 0) == 0 for c in planned_cards)):
                 time.sleep(0.2)
@@ -685,7 +720,11 @@ class GameActions:
                     
                     # 修正：重建planned_cards时包含所有新检测到的卡牌，而不仅仅是初始计划中的卡牌
                     # 这样可以处理新抽到的卡牌（如0费卡牌）
-                    planned_cards = new_cards
+                    # 过滤掉当前回合需要忽略的卡牌
+                    if self._current_round_ignored_cards:
+                        self.device_state.logger.info(f"重新扫描过滤忽略列表中的卡牌: {list(self._current_round_ignored_cards)}")
+                    filtered_new_cards = [c for c in new_cards if c.get('name', '') not in self._current_round_ignored_cards]
+                    planned_cards = filtered_new_cards
                     
                     # 重新应用优先级排序
                     high_priority_names = set(high_priority_cards_cfg.keys())
@@ -849,89 +888,32 @@ class GameActions:
 
     def _play_single_card(self, card):
         """打出单张牌（适配green/yellow/normal类型）"""
-        cost = card.get('cost', 0)
-        center_x, center_y = card['center']
-        target_x = center_x + 40
-        card_name = card.get('name', '')
+        from .card_play_special_actions import CardPlaySpecialActions
+        card_play_actions = CardPlaySpecialActions(self.device_state)
+        result = card_play_actions.play_single_card(card)
         
-        # 导入特殊卡牌配置
-        from src.config.card_priorities import get_special_cards, get_high_priority_cards
-        special_cards = get_special_cards()
-        high_priority_names = set(get_high_priority_cards().keys())
+        # 处理额外的费用奖励
+        extra_cost_bonus = getattr(card_play_actions, '_extra_cost_bonus', 0)
+        if extra_cost_bonus > 0:
+            self.device_state.logger.info(f"获得额外费用: +{extra_cost_bonus}")
+            # 将额外费用奖励存储到实例变量中，供调用方使用
+            self._current_extra_cost_bonus = extra_cost_bonus
         
-        # 检查是否为特殊处理卡牌
-        if card_name in special_cards:
-            special_info = special_cards[card_name]
-            target_type = special_info.get('target_type', '')
-            
-            if target_type == 'enemy_player':
-                # 蛇神之怒类型：选择敌方玩家目标
-                self.device_state.logger.info(f"检测到{card_name}，划出卡牌后选择敌方玩家目标")
-                # 划出卡牌
-                human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x, 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                time.sleep(0.7)  # 等待
-                
-                from src.config.game_constants import DEFAULT_ATTACK_TARGET, DEFAULT_ATTACK_RANDOM
-                enemy_x = DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
-                enemy_y = DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
-                self.device_state.u2_device.click(enemy_x, enemy_y)
-                self.device_state.logger.info(f"{card_name}选择敌方玩家目标: ({enemy_x}, {enemy_y})")
-                time.sleep(0.1)  # 等待0.1秒
-                
-            elif target_type == 'shield_or_highest_hp':
-                # 奥丁类型：优先破坏护盾，否则选择血量最高的敌方随从
-                self.device_state.logger.info(f"检测到{card_name}，先检测护盾情况")
-                # 检测护盾
-                shield_targets = self._scan_shield_targets()
-                shield_detected = bool(shield_targets)
-                
-                if shield_detected:
-                    self.device_state.logger.info("检测到护盾，划出卡牌后破坏护盾随从")
-                    # 划出卡牌
-                    human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                    time.sleep(0.5)  # 等待
-                    
-                    # 点击护盾随从（选择第一个护盾）
-                    shield_x, shield_y = shield_targets[0]
-                    self.device_state.u2_device.click(shield_x, shield_y)
-                    self.device_state.logger.info(f"点击护盾随从位置: ({shield_x}, {shield_y})")
-                else:
-                    self.device_state.logger.info("未检测到护盾，划出卡牌后破坏血量最高的敌方随从")
-                    # 划出卡牌
-                    human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                    time.sleep(0.2)  # 等待0.2秒
-                    
-                    # 检测敌方随从
-                    screenshot = self.device_state.take_screenshot()
-                    if screenshot:
-                        enemy_followers = self._scan_enemy_followers(screenshot)
-                        if enemy_followers:
-                            # 找出血量最高的随从
-                            try:
-                                max_hp_follower = max(enemy_followers, key=lambda x: int(x[3]) if x[3].isdigit() else 0)
-                                enemy_x, enemy_y, _, _ = max_hp_follower
-                                enemy_x = int(enemy_x)
-                                enemy_y = int(enemy_y)
-                                self.device_state.u2_device.click(enemy_x, enemy_y)
-                                self.device_state.logger.info(f"点击血量最高的敌方随从位置: ({enemy_x}, {enemy_y})")
-                            except Exception as e:
-                                self.device_state.logger.warning(f"选择敌方随从时出错: {str(e)}")
-                        else:
-                            self.device_state.logger.info("未检测到敌方随从")
-                time.sleep(2.7)
-            else:
-                # 其他特殊卡牌，使用默认处理
-                human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-        else:
-            # 普通卡牌，正常打出
-            human_like_drag(self.device_state.u2_device, center_x, center_y+random.randint(-2, 2), target_x+random.randint(-2, 2), 400+random.randint(-2, 2), duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+        # 处理不消耗费用的特殊情况
+        should_not_consume_cost = getattr(card_play_actions, '_should_not_consume_cost', False)
+        if should_not_consume_cost:
+            self.device_state.logger.info("特殊卡牌未消耗费用")
+            # 将不消耗费用的标记存储到实例变量中，供调用方使用
+            self._should_not_consume_cost = True
         
-        # 如果是高优先级卡牌，多等一会
-        if card_name in high_priority_names:
-            time.sleep(1)
+        # 处理需要从手牌中移除的特殊情况
+        should_remove_from_hand = getattr(card_play_actions, '_should_remove_from_hand', False)
+        if should_remove_from_hand:
+            self.device_state.logger.info("特殊卡牌需要从手牌中移除")
+            # 将需要移除的标记存储到实例变量中，供调用方使用
+            self._should_remove_from_hand = True
         
-        time.sleep(0.5)
-        return True
+        return result
 
 
 
