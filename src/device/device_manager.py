@@ -6,6 +6,7 @@
 import threading
 import logging
 import time
+from adbutils import device
 import cv2
 import numpy as np
 import os
@@ -233,7 +234,6 @@ class DeviceManager:
                 if key == 'war':
                     # 检测到"决斗"按钮，表示新对战开始
                     device_state.logger.debug(f"检测到决斗按钮 - 当前in_match: {device_state.in_match}")
-                    device_state.start_new_match()
                     # 计算中心点并点击
                     center_x = max_loc[0] + template_info['w'] // 2
                     center_y = max_loc[1] + template_info['h'] // 2
@@ -243,6 +243,7 @@ class DeviceManager:
                     continue
 
                 if key == 'decision':
+                    device_state.start_new_match()
                     game_manager.game_actions._detect_change_card()
                     time.sleep(0.5)
                     center_x = max_loc[0] + template_info['w'] // 2
@@ -253,41 +254,22 @@ class DeviceManager:
                 if key == 'end_round':
                     device_state.logger.debug(f"处理结束回合按钮 - in_match: {device_state.in_match}, 当前回合: {device_state.current_round_count}")
                     
-                    # 第5回合及以后，检查场上随从数量
-                    if device_state.current_round_count >= 5:
-                        # 获取场上随从位置和数量
-                        screenshot = device_state.take_screenshot()
-                        if screenshot:
-                            our_followers_positions = game_manager.scan_our_followers(screenshot)
-                            follower_count = len(our_followers_positions)
-                            device_state.logger.debug(f"第{device_state.current_round_count}回合，场上随从数量: {follower_count}")
-                            
-                            # 如果场上随从数量为5个，先进行进化/超进化和攻击操作
-                            if follower_count == 5:
-                                device_state.logger.debug(f"第{device_state.current_round_count}回合，场上随从满5个，先进行进化/超进化和攻击操作")
-                                # 更新随从管理器
-                                device_state.follower_manager.update_positions(our_followers_positions)
-                                
-                                # 执行满5随从的特殊操作
-                                game_manager.game_actions.perform_five_follower_actions()
-                            else:
-                                device_state.logger.debug(f"第{device_state.current_round_count}回合，场上随从数量为{follower_count}，不满足满5个条件")
-                    
                     # 根据是否有额外费用点决定进化/超进化执行回合
                     if device_state.extra_cost_available_this_match:
-                        evolution_rounds = (4, 5, 6, 7, 8)
+                        evolution_rounds = range(4, 25)  # 4到14，包含4和14
                     else:
-                        evolution_rounds = (5, 6, 7, 8, 9)
+                        evolution_rounds = range(5, 25) # 5到14，包含5和14
                     if device_state.current_round_count in evolution_rounds:
-                        device_state.logger.debug(f"第{device_state.current_round_count}回合，执行进化/超进化")
                         game_manager.game_actions.perform_fullPlus_actions()
                     else:
-                        device_state.logger.debug(f"第{device_state.current_round_count}回合，执行正常操作")
                         game_manager.game_actions.perform_full_actions()
-
+                    if device_state.current_round_count == 15:
+                        device_state.restart_emulator()
+                   
+                        
                     # 记录当前回合的费用使用情况（在回合结束时）
                     device_state.last_round_available_cost = device_state.current_round_count  # 当前回合的基础费用
-                    # 如果有激活的额外费用点，加上额外费用
+                    # 如果有激活的额外费用点，加上额外费用（PP）
                     if device_state.extra_cost_active and device_state.extra_cost_remaining_uses > 0:
                         device_state.last_round_available_cost += 1
                     
@@ -311,18 +293,7 @@ class DeviceManager:
                     device_state.last_detected_button = key
                     time.sleep(0.5)
                     break
-                elif key == 'end_round' and not device_state.in_match:
-                    device_state.logger.debug(f"检测到结束回合按钮但不在对战中 - in_match: {device_state.in_match}")
-                    # 计算中心点并点击
-                    center_x = max_loc[0] + template_info['w'] // 2
-                    center_y = max_loc[1] + template_info['h'] // 2
-                    device_state.u2_device.click(center_x + random.randint(-2, 2), center_y + random.randint(-2, 2))
-                    button_detected = True
-                    if key != device_state.last_detected_button:
-                        device_state.logger.debug(f"检测到按钮并点击: {template_info['name']} ")
-                    device_state.last_detected_button = key
-                    time.sleep(0.5)
-                    break
+
 
                 # 计算中心点并点击（除了结束回合按钮）
                 center_x = max_loc[0] + template_info['w'] // 2

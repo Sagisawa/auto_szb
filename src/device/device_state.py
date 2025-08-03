@@ -39,6 +39,8 @@ class DeviceState:
         
         # 对战状态
         self.current_round_count = 1
+        self.evolution_point = 2
+        self.super_evolution_point = 2
         self.match_start_time: Optional[float] = None
         self.match_history: List[Dict[str, Any]] = []
         self.current_run_matches = 0
@@ -164,8 +166,8 @@ class DeviceState:
                 else:
                     img_bgr = img_array
                 
-                # 提高亮度40
-                brightness = 40
+                # 提高亮度43
+                brightness = 43
                 img_brightened = cv2.add(img_bgr, brightness)
                 
                 # 转换回RGB格式
@@ -225,6 +227,8 @@ class DeviceState:
         # 重置对战状态
         self.match_start_time = None
         self.current_round_count = 1
+        self.evolution_point = 2
+        self.super_evolution_point = 2
 
     def save_round_statistics(self):
         """保存回合统计数据到文件"""
@@ -377,6 +381,8 @@ class DeviceState:
         self.in_match = False
         self.match_start_time = None
         self.current_round_count = 1
+        self.evolution_point = 2
+        self.super_evolution_point = 2
         self.extra_cost_used_early = False
         self.extra_cost_used_late = False
         self.extra_cost_available_this_match = None
@@ -394,6 +400,8 @@ class DeviceState:
         self.current_run_matches += 1
         self.match_start_time = time.time()
         self.current_round_count = 1
+        self.evolution_point = 2
+        self.super_evolution_point = 2
         
         # 重置额外费用点状态，但不重置in_match
         self.extra_cost_used_early = False
