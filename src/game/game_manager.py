@@ -231,12 +231,15 @@ class GameManager:
     def scan_our_followers(self, screenshot, debug_flag=False):
         """检测场上的我方随从位置和状态，扫描结果合并去重结果（并发优化）"""
         import time
+        import random
         from math import hypot
         import numpy as np
         import cv2
         from PIL import Image
         import os
         from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        all_follower_positions = []
 
         screenshots = [screenshot]
         # 再截图几次识别，每次间隔一段时间
@@ -508,6 +511,7 @@ class GameManager:
                 min_dim = min(w, h)
                 max_dim = max(w, h)
                 if 15 < max_dim < 40 and 3 < min_dim < 15 and area < 200 :
+                    all_follower_positions.append(((int(center_x+263), 330),(int(center_x+263+103), 463)))
                     #区域截图中卡我方随从的中心位置
                     in_card_center_x_full = center_x + 50
                     in_card_center_y_full = center_y - 46
@@ -556,393 +560,14 @@ class GameManager:
             follower_positions.sort(key=lambda pos: pos[0])
             return follower_positions
 
-        # 并发执行HSV识别和SIFT识别
+        # 并发执行HSV识别
         all_positions = []
         recognize_count = 0
         success_count = 0
         
-        # 准备SIFT识别所需的图像数据
-        if hasattr(screenshot, 'shape'):
-            cv_img = screenshot
-        else:
-            cv_img = np.array(screenshot)
-            cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
-        
-        # 只对随从识别区域进行特征提取
-        sx1, sy1, sx2, sy2 = 176, 295, 1015, 482
-        search_img = cv_img[sy1:sy2, sx1:sx2]
-        
-        # 转换为灰度图像进行SIFT特征提取
-        search_img_gray = cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY)
-        sift = cv2.SIFT_create(nfeatures=0, contrastThreshold=0.03)
-        skp, sdes = sift.detectAndCompute(search_img_gray, None)
-        
-        # 定义SIFT识别函数
-        def perform_sift_recognition():
-            """执行SIFT识别"""
-            if sdes is None:
-                return []
-            
-            # 1. 并发加载所有模板图片
-            def load_template_features(filename):
-                """并发加载单个模板的特征"""
-                if not filename.endswith('.png'):
-                    return None
-                template_path = os.path.join("shadowverse_cards_cost", filename)
-                tname = os.path.splitext(filename)[0]
-                try:
-                    pil_img = Image.open(template_path)
-                    template_img = np.array(pil_img)
-                    if len(template_img.shape) == 3 and template_img.shape[2] == 4:
-                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGBA2BGR)
-                    elif len(template_img.shape) == 3 and template_img.shape[2] == 3:
-                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGB2BGR)
-                except Exception as e:
-                    return None
-                
-                TEMPLATE_RECT = (101, 151, 442, 568)
-                SCALE_FACTOR = 0.4
-                tx1, ty1, tx2, ty2 = TEMPLATE_RECT
-                template = template_img[ty1:ty2, tx1:tx2]
-                template = cv2.resize(template, (0, 0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
-                
-                # 转换为灰度图像进行SIFT特征提取
-                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-                
-                sift = cv2.SIFT_create(nfeatures=0, contrastThreshold=0.03)
-                tkp, tdes = sift.detectAndCompute(template_gray, None)
-                if tdes is not None:
-                    return tname, {'template': template, 'keypoints': tkp, 'descriptors': tdes}
-                return None
-
-            # 并发加载模板
-            template_dir = "shadowverse_cards_cost"
-            template_files = [f for f in os.listdir(template_dir) if f.endswith('.png')]
-            card_templates = {}
-            
-            with ThreadPoolExecutor(max_workers=min(8, len(template_files))) as executor:
-                futures = [executor.submit(load_template_features, filename) for filename in template_files]
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        if result is not None:
-                            tname, template_info = result
-                            card_templates[tname] = template_info
-                    except Exception as e:
-                        import logging
-                        logging.error(f"模板加载异常: {e}")
-                        continue
-            
-            # 2. 并发匹配模板
-            def match_template_features(template_item):
-                """并发匹配单个模板的特征，支持多个相同目标"""
-                tname, tinfo = template_item
-                tdes = tinfo['descriptors']
-                tkp = tinfo['keypoints']
-                
-                FLANN_INDEX_KDTREE = 1
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict(checks=50)
-                flann = cv2.FlannBasedMatcher(index_params, search_params)
-                matches = flann.knnMatch(tdes, sdes, k=2)
-                
-                good_matches = []
-                for m, n in matches:
-                    if m.distance < 0.7 * n.distance:
-                        good_matches.append(m)
-                if len(good_matches) < 3:
-                    return []
-                    
-                avg_distance = np.mean([m.distance for m in good_matches])
-                if avg_distance <= 100:
-                    distance_score = 1.0
-                elif avg_distance <= 200:
-                    distance_score = 1.0 - (avg_distance - 100) / 100
-                else:
-                    distance_score = max(0, 1.0 - (avg_distance - 200) / 100)
-                match_ratio = len(good_matches) / len(tdes)
-                confidence = distance_score * match_ratio
-                if confidence < 0.01:
-                    return []
-                
-                # 使用DBSCAN聚类来检测多个实例
-                from sklearn.cluster import DBSCAN
-                
-                # 提取匹配点的坐标
-                src_pts = np.float32([tkp[m.queryIdx].pt for m in good_matches])
-                dst_pts = np.float32([skp[m.trainIdx].pt for m in good_matches])
-                
-                # 使用DBSCAN聚类检测多个实例
-                clustering = DBSCAN(eps=50, min_samples=3).fit(dst_pts)
-                labels = clustering.labels_
-                
-                results = []
-                unique_labels = set(labels)
-                
-                for label in unique_labels:
-                    if label == -1:  # 噪声点，跳过
-                        continue
-                    
-                    # 获取当前聚类的匹配点
-                    cluster_mask = labels == label
-                    cluster_src_pts = src_pts[cluster_mask]
-                    cluster_dst_pts = dst_pts[cluster_mask]
-                    
-                    if len(cluster_src_pts) < 4:  # 至少需要4个点计算单应性
-                        continue
-                    
-                    # 重新计算单应性矩阵
-                    cluster_src_pts_reshaped = cluster_src_pts.reshape(-1, 1, 2)
-                    cluster_dst_pts_reshaped = cluster_dst_pts.reshape(-1, 1, 2)
-                    
-                    try:
-                        M, mask = cv2.findHomography(cluster_src_pts_reshaped, cluster_dst_pts_reshaped, cv2.RANSAC, 5.0)
-                        if M is not None:
-                            h, w = tinfo['template'].shape[:2]
-                            template_center = np.array([[w/2, h/2, 1]], dtype=np.float32)
-                            target_center = M.dot(template_center.T)
-                            if target_center[2] == 0 or np.isnan(target_center[0]) or np.isnan(target_center[1]) or np.isnan(target_center[2]):
-                                continue
-                            target_center = target_center / target_center[2]
-                            center_x = float(target_center[0])
-                            center_y = float(target_center[1])
-                            if np.isnan(center_x) or np.isnan(center_y):
-                                continue
-                            center_x = int(center_x) + sx1
-                            center_y = int(center_y) + sy1
-                            
-                            # 计算当前实例的置信度
-                            cluster_avg_distance = np.mean([m.distance for i, m in enumerate(good_matches) if cluster_mask[i]])
-                            cluster_confidence = distance_score * (len(cluster_src_pts) / len(tdes))
-                            
-                            results.append({
-                                'center': (center_x, center_y), 
-                                'name': tname,
-                                'confidence': cluster_confidence,
-                                'cluster_size': len(cluster_src_pts)
-                            })
-                    except Exception as e:
-                        import logging
-                        logging.error(f"SIFT特征点单应性计算异常: {e}")
-                        continue
-                
-                return results
-
-            # 并发匹配模板
-            sift_results = []
-            if sdes is not None and card_templates:
-                template_items = list(card_templates.items())
-                with ThreadPoolExecutor(max_workers=min(8, len(template_items))) as executor:
-                    futures = [executor.submit(match_template_features, item) for item in template_items]
-                    for future in as_completed(futures):
-                        try:
-                            results = future.result()
-                            if results:  # 现在返回的是结果列表
-                                sift_results.extend(results)
-                        except Exception as e:
-                            import logging
-                            logging.error(f"模板匹配异常: {e}")
-                            continue
-            
-            return sift_results
-        
-        # 定义第二个SIFT识别函数（使用指定截图）
-        def perform_sift_recognition_with_screenshot(target_screenshot):
-            """使用指定截图执行SIFT识别"""
-            if target_screenshot is None:
-                return []
-            
-            # 准备SIFT识别所需的图像数据
-            if hasattr(target_screenshot, 'shape'):
-                cv_img = target_screenshot
-            else:
-                cv_img = np.array(target_screenshot)
-            cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
-            
-            # 只对随从识别区域进行特征提取
-            sx1, sy1, sx2, sy2 = 176, 295, 1015, 482
-            search_img = cv_img[sy1:sy2, sx1:sx2]
-            
-            # 转换为灰度图像进行SIFT特征提取
-            search_img_gray = cv2.cvtColor(search_img, cv2.COLOR_BGR2GRAY)
-            sift = cv2.SIFT_create(nfeatures=0, contrastThreshold=0.03)
-            skp, sdes = sift.detectAndCompute(search_img_gray, None)
-
-            if sdes is None:
-                return []
-            
-            # 1. 并发加载所有模板图片
-            def load_template_features(filename):
-                """并发加载单个模板的特征"""
-                if not filename.endswith('.png'):
-                    return None
-                template_path = os.path.join("shadowverse_cards_cost", filename)
-                tname = os.path.splitext(filename)[0]
-                try:
-                    pil_img = Image.open(template_path)
-                    template_img = np.array(pil_img)
-                    if len(template_img.shape) == 3 and template_img.shape[2] == 4:
-                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGBA2BGR)
-                    elif len(template_img.shape) == 3 and template_img.shape[2] == 3:
-                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGB2BGR)
-                except Exception as e:
-                    return None
-                
-                TEMPLATE_RECT = (101, 151, 442, 568)
-                SCALE_FACTOR = 0.4
-                tx1, ty1, tx2, ty2 = TEMPLATE_RECT
-                template = template_img[ty1:ty2, tx1:tx2]
-                template = cv2.resize(template, (0, 0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
-                
-                # 转换为灰度图像进行SIFT特征提取
-                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-                
-                sift = cv2.SIFT_create(nfeatures=0,contrastThreshold=0.03)
-                tkp, tdes = sift.detectAndCompute(template_gray, None)
-                if tdes is not None:
-                    return tname, {'template': template, 'keypoints': tkp, 'descriptors': tdes}
-                return None
-
-            # 并发加载模板
-            template_dir = "shadowverse_cards_cost"
-            template_files = [f for f in os.listdir(template_dir) if f.endswith('.png')]
-            card_templates = {}
-            
-            with ThreadPoolExecutor(max_workers=min(8, len(template_files))) as executor:
-                futures = [executor.submit(load_template_features, filename) for filename in template_files]
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        if result is not None:
-                            tname, template_info = result
-                            card_templates[tname] = template_info
-                    except Exception as e:
-                        import logging
-                        logging.error(f"模板加载异常: {e}")
-                        continue
-            
-            # 2. 并发匹配模板
-            def match_template_features(template_item):
-                """并发匹配单个模板的特征，支持多个相同目标"""
-                tname, tinfo = template_item
-                tdes = tinfo['descriptors']
-                tkp = tinfo['keypoints']
-                
-                FLANN_INDEX_KDTREE = 1
-                index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-                search_params = dict(checks=50)
-                flann = cv2.FlannBasedMatcher(index_params, search_params)
-                matches = flann.knnMatch(tdes, sdes, k=2)
-                
-                good_matches = []
-                for m, n in matches:
-                    if m.distance < 0.7 * n.distance:
-                        good_matches.append(m)
-                if len(good_matches) < 4:
-                    return []
-                    
-                avg_distance = np.mean([m.distance for m in good_matches])
-                if avg_distance <= 100:
-                    distance_score = 1.0
-                elif avg_distance <= 200:
-                    distance_score = 1.0 - (avg_distance - 100) / 100
-                else:
-                    distance_score = max(0, 1.0 - (avg_distance - 200) / 100)
-                match_ratio = len(good_matches) / len(tdes)
-                confidence = distance_score * match_ratio
-                if confidence < 0.01:
-                    return []
-                
-                # 使用DBSCAN聚类来检测多个实例
-                from sklearn.cluster import DBSCAN
-                
-                # 提取匹配点的坐标
-                src_pts = np.float32([tkp[m.queryIdx].pt for m in good_matches])
-                dst_pts = np.float32([skp[m.trainIdx].pt for m in good_matches])
-                
-                # 使用DBSCAN聚类检测多个实例
-                clustering = DBSCAN(eps=50, min_samples=3).fit(dst_pts)
-                labels = clustering.labels_
-                
-                results = []
-                unique_labels = set(labels)
-                
-                for label in unique_labels:
-                    if label == -1:  # 噪声点，跳过
-                        continue
-                    
-                    # 获取当前聚类的匹配点
-                    cluster_mask = labels == label
-                    cluster_src_pts = src_pts[cluster_mask]
-                    cluster_dst_pts = dst_pts[cluster_mask]
-                    
-                    if len(cluster_src_pts) < 4:  # 至少需要4个点计算单应性
-                        continue
-                    
-                    # 重新计算单应性矩阵
-                    cluster_src_pts_reshaped = cluster_src_pts.reshape(-1, 1, 2)
-                    cluster_dst_pts_reshaped = cluster_dst_pts.reshape(-1, 1, 2)
-                    
-                    try:
-                        M, mask = cv2.findHomography(cluster_src_pts_reshaped, cluster_dst_pts_reshaped, cv2.RANSAC, 5.0)
-                        if M is not None:
-                            h, w = tinfo['template'].shape[:2]
-                            template_center = np.array([[w/2, h/2, 1]], dtype=np.float32)
-                            target_center = M.dot(template_center.T)
-                            if target_center[2] == 0 or np.isnan(target_center[0]) or np.isnan(target_center[1]) or np.isnan(target_center[2]):
-                                continue
-                            target_center = target_center / target_center[2]
-                            center_x = float(target_center[0])
-                            center_y = float(target_center[1])
-                            if np.isnan(center_x) or np.isnan(center_y):
-                                continue
-                            center_x = int(center_x) + sx1
-                            center_y = int(center_y) + sy1
-                            
-                            # 计算当前实例的置信度
-                            cluster_avg_distance = np.mean([m.distance for i, m in enumerate(good_matches) if cluster_mask[i]])
-                            cluster_confidence = distance_score * (len(cluster_src_pts) / len(tdes))
-                            
-                            results.append({
-                                'center': (center_x, center_y), 
-                                'name': tname,
-                                'confidence': cluster_confidence,
-                                'cluster_size': len(cluster_src_pts)
-                            })
-                    except Exception as e:
-                        import logging
-                        logging.error(f"SIFT特征点单应性计算异常: {e}")
-                        continue
-
-                return results
-
-            # 并发匹配模板
-            sift_results = []
-            if sdes is not None and card_templates:
-                template_items = list(card_templates.items())
-                with ThreadPoolExecutor(max_workers=min(8, len(template_items))) as executor:
-                    futures = [executor.submit(match_template_features, item) for item in template_items]
-                    for future in as_completed(futures):
-                        try:
-                            results = future.result()
-                            if results:  # 现在返回的是结果列表
-                                sift_results.extend(results)
-                        except Exception as e:
-                            import logging
-                            logging.error(f"模板匹配异常: {e}")
-                            continue
-            
-            return sift_results
-        
-        # 并发执行HSV识别和多次SIFT识别
-        with ThreadPoolExecutor(max_workers=len(screenshots) + 2) as executor:  # 增加1个SIFT线程
+        with ThreadPoolExecutor(max_workers=len(screenshots)) as executor:
             # 提交HSV识别任务
             hsv_futures = [executor.submit(recognize_followers, shot, debug_flag) for shot in screenshots if shot is not None]
-            # 提交第一次SIFT识别任务（使用原始截图）
-            sift_future1 = executor.submit(perform_sift_recognition)
-            # 提交第二次SIFT识别任务（使用额外截图）
-            sift_future2 = executor.submit(lambda: perform_sift_recognition_with_screenshot(screenshots[0] if screenshots else screenshot))
-            
             recognize_count = len(hsv_futures)
             import logging
             
@@ -954,89 +579,12 @@ class GameManager:
                     success_count += 1
                 except Exception as e:
                     logging.error(f"recognize_followers线程异常: {e}")
-            
-            # 等待两次SIFT识别结果
-            try:
-                sift_results1 = sift_future1.result()
-            except Exception as e:
-                logging.error(f"第一次SIFT识别线程异常: {e}")
-                sift_results1 = []
-                
-            try:
-                sift_results2 = sift_future2.result()
-            except Exception as e:
-                logging.error(f"第二次SIFT识别线程异常: {e}")
-                sift_results2 = []
-            
-            # 合并两次SIFT识别结果
-            sift_results = sift_results1 + sift_results2
-            
-            # 合并相近的SIFT中心点
-            def merge_nearby_sift_results(sift_results, distance_threshold=50):
-                """合并相近的SIFT识别结果"""
-                if not sift_results:
-                    return []
-                
-                merged_sift = []
-                used_indices = set()
-                
-                for i, result1 in enumerate(sift_results):
-                    if i in used_indices:
-                        continue
-                    
-                    # 创建合并组
-                    merge_group = [result1]
-                    used_indices.add(i)
-                    
-                    # 查找相近的结果
-                    for j, result2 in enumerate(sift_results):
-                        if j in used_indices:
-                            continue
-                        
-                        # 检查是否是相同的随从名称
-                        if result1['name'] != result2['name']:
-                            continue
-                        
-                        # 计算距离
-                        x1, y1 = result1['center']
-                        x2, y2 = result2['center']
-                        distance = hypot(x1 - x2, y1 - y2)
-                        
-                        if distance < distance_threshold:
-                            merge_group.append(result2)
-                            used_indices.add(j)
-                    
-                    # 合并组内的结果
-                    if len(merge_group) == 1:
-                        # 单个结果，直接添加
-                        merged_sift.append(result1)
-                    else:
-                        # 多个相近结果，计算加权平均
-                        total_confidence = sum(r['confidence'] for r in merge_group)
-                        weighted_x = sum(r['center'][0] * r['confidence'] for r in merge_group) / total_confidence
-                        weighted_y = sum(r['center'][1] * r['confidence'] for r in merge_group) / total_confidence
-                        
-                        # 选择置信度最高的结果作为基础
-                        best_result = max(merge_group, key=lambda r: r['confidence'])
-                        
-                        merged_result = {
-                            'center': (int(weighted_x), int(weighted_y)),
-                            'name': best_result['name'],
-                            'confidence': total_confidence / len(merge_group),  # 平均置信度
-                            'cluster_size': sum(r['cluster_size'] for r in merge_group),  # 总特征点数
-                            'merge_count': len(merge_group)  # 合并的数量
-                        }
-                        merged_sift.append(merged_result)
-                
-                return merged_sift
-            
-            # 合并相近的SIFT结果
-            sift_results = merge_nearby_sift_results(sift_results, distance_threshold=50)
-
-        # 只使用HSV识别结果，SIFT只用于命名
-        # 合并HSV检测结果，去除非常接近的点
+            if not hsv_futures:
+                return []
+        
+        # HSV结果去重（x轴在54像素内的点视为同一个随从点）
         hsv_positions = []
-        threshold = 50  # 距离阈值（x轴判断）
+        threshold = 54  # 距离阈值（x轴判断）
         for pos in all_positions:
             x1, y1, t1 = pos[:3]
             found = False
@@ -1048,27 +596,202 @@ class GameManager:
             if not found:
                 hsv_positions.append(pos)
         hsv_positions.sort(key=lambda pos: pos[0])
+        
+        # all_follower_positions去重（左上角的点x轴在54像素内的点视为同一个点）
+        deduplicated_follower_positions = []
+        for rect_coords in all_follower_positions:
+            (x1, y1), (x2, y2) = rect_coords
+            # 确保坐标为整数
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            found = False
+            for existing_rect in deduplicated_follower_positions:
+                (ex1, ey1), (ex2, ey2) = existing_rect
+                if abs(x1 - ex1) < 54:  # 左上角x轴距离小于54像素
+                    found = True
+                    break
+            if not found:
+                deduplicated_follower_positions.append(((x1, y1), (x2, y2)))
+        
+        # 新的SIFT识别逻辑：基于去重后的all_follower_positions矩形区域
+        def perform_sift_recognition_on_rectangles():
+            """对去重后的all_follower_positions中的每个矩形区域进行SIFT识别"""
+            import os
+            from PIL import Image
+            
+            # 准备截图数据
+            if hasattr(screenshot, 'shape'):
+                cv_img = screenshot
+            else:
+                cv_img = np.array(screenshot)
+                cv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2BGR)
+            
+            # 加载模板图片
+            def load_template_features(filename):
+                """加载单个模板的特征"""
+                if not filename.endswith('.png'):
+                    return None
+                template_path = os.path.join("shadowverse_cards_cost", filename)
+                tname = os.path.splitext(filename)[0]
+                try:
+                    pil_img = Image.open(template_path)
+                    template_img = np.array(pil_img)
+                    if len(template_img.shape) == 3 and template_img.shape[2] == 4:
+                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGBA2BGR)
+                    elif len(template_img.shape) == 3 and template_img.shape[2] == 3:
+                        template_img = cv2.cvtColor(template_img, cv2.COLOR_RGB2BGR)
+                except Exception as e:
+                    return None
 
+                TEMPLATE_SCALE_FACTOR = 0.4
+                
+                # 截取模板图片中的指定区域
+                TEMPLATE_RECT = (101, 151, 442, 568)
+                tx1, ty1, tx2, ty2 = TEMPLATE_RECT
+                template = template_img[ty1:ty2, tx1:tx2]
 
-        # 4. 遍历HSV识别到的随从中心点，使用SIFT识别结果进行命名
+                # 仅对模板应用缩放（关键修改）
+                if TEMPLATE_SCALE_FACTOR != 1.0:
+                    new_width = int(template.shape[1] * TEMPLATE_SCALE_FACTOR)
+                    new_height = int(template.shape[0] * TEMPLATE_SCALE_FACTOR)
+                    template = cv2.resize(template, (new_width, new_height), 
+                                         interpolation=cv2.INTER_AREA)
+                
+                # 图像预处理
+                template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+                template_gray = cv2.equalizeHist(template_gray)
+                template_gray = cv2.GaussianBlur(template_gray, (3, 3), 0.5)
+                
+                # SIFT特征提取
+                sift = cv2.SIFT_create(
+                    nfeatures=0,
+                    contrastThreshold=0.02,
+                    edgeThreshold=15,
+                    sigma=1.6
+                )
+                tkp, tdes = sift.detectAndCompute(template_gray, None)
+                if tdes is not None:
+                    return tname, {'template': template, 'keypoints': tkp, 'descriptors': tdes}
+                return None
+
+            # 加载所有模板
+            template_dir = "shadowverse_cards_cost"
+            template_files = [f for f in os.listdir(template_dir) if f.endswith('.png')]
+            card_templates = {}
+
+            
+            with ThreadPoolExecutor(max_workers=min(8, len(template_files))) as executor:
+                futures = [executor.submit(load_template_features, filename) for filename in template_files]
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result is not None:
+                            tname, template_info = result
+                            card_templates[tname] = template_info
+                    except Exception as e:
+                        import logging
+                        logging.error(f"模板加载异常: {e}")
+                        continue
+            
+            # 对每个矩形区域进行SIFT识别
+            results = []
+            for rect_coords in deduplicated_follower_positions:
+                (x1, y1), (x2, y2) = rect_coords
+                
+                # 确保坐标为整数
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                
+                # 截取矩形区域
+                rect_img = cv_img[y1:y2, x1:x2]
+                if rect_img.size == 0:
+                    continue
+                
+                # 图像预处理
+                rect_gray = cv2.cvtColor(rect_img, cv2.COLOR_BGR2GRAY)
+                rect_gray = cv2.equalizeHist(rect_gray)
+                rect_gray = cv2.GaussianBlur(rect_gray, (3, 3), 0.5)
+                
+                # SIFT特征提取
+                sift = cv2.SIFT_create(
+                    nfeatures=0,
+                    contrastThreshold=0.02,
+                    edgeThreshold=15,
+                    sigma=1.2
+                )
+                rkp, rdes = sift.detectAndCompute(rect_gray, None)
+                
+                if rdes is None:
+                    continue
+                
+                # 与所有模板进行匹配
+                best_match = None
+                best_confidence = 0
+                
+                for tname, tinfo in card_templates.items():
+                    tdes = tinfo['descriptors']
+                    tkp = tinfo['keypoints']
+                    
+                    # FLANN匹配
+                    FLANN_INDEX_KDTREE = 1
+                    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=8)
+                    search_params = dict(checks=100)
+                    flann = cv2.FlannBasedMatcher(index_params, search_params)
+                    matches = flann.knnMatch(tdes, rdes, k=2)
+                    
+                    good_matches = []
+                    for m, n in matches:
+                        if m.distance < 0.7 * n.distance:
+                            good_matches.append(m)
+                    
+                    if len(good_matches) < 3:
+                        continue
+                    
+                    # 计算置信度
+                    avg_distance = np.mean([m.distance for m in good_matches])
+                    if avg_distance <= 120:
+                        distance_score = 1.0
+                    elif avg_distance <= 250:
+                        distance_score = 1.0 - (avg_distance - 120) / 130
+                    else:
+                        distance_score = max(0, 1.0 - (avg_distance - 250) / 150)
+                    
+                    match_ratio = len(good_matches) / len(tdes)
+                    confidence = distance_score * match_ratio
+                    
+                    if confidence >= 0.01 and confidence > best_confidence:
+                        best_confidence = confidence
+                        best_match = tname
+                
+                if best_match is not None:
+                    # 计算矩形中心点
+                    center_x = int((x1 + x2) // 2)
+                    center_y = int((y1 + y2) // 2)
+                    
+                    # 去除前缀的费用数字和下划线，只保留随从名
+                    if '_' in best_match:
+                        name = best_match.split('_', 1)[1]
+                    else:
+                        name = best_match
+                    
+                    results.append((center_x, center_y, name))
+            
+            return results
+        
+        # 执行SIFT识别
+        sift_results = perform_sift_recognition_on_rectangles()
+        
+        # 用SIFT识别结果对HSV识别去重后的结果进行命名
         result_with_name = []
         for x, y, t in hsv_positions:
+            x=int(x)
             name = None
             best_match_distance = float('inf')
             
-            # 在SIFT结果中寻找最近的匹配
+            # 在SIFT结果中寻找最近的匹配（x轴距离在30像素内）
             for sift_item in sift_results:
-                cx, cy = sift_item['center']
-                # 只计算y轴距离
+                cx, cy, sift_name = sift_item
                 x_distance = abs(cx - x)
-                # 如果y轴距离小于50像素，就可以判断成是这个随从
-                if x_distance < 50 and x_distance < best_match_distance:
-                    # 去除前缀的费用数字和下划线，只保留随从名
-                    raw_name = sift_item['name']
-                    if '_' in raw_name:
-                        name = raw_name.split('_', 1)[1]
-                    else:
-                        name = raw_name
+                if x_distance < 30 and x_distance < best_match_distance:
+                    name = sift_name
                     best_match_distance = x_distance
             
             # 检查x, y是否为NaN，若是则跳过
@@ -1076,11 +799,28 @@ class GameManager:
             if np.isnan(x) or np.isnan(y):
                 continue
             result_with_name.append((x, y, t, name))
+        
+        # 强制校准我方随从在y轴的坐标
+        result_with_name = [(x, 399+random.randint(-7, 7), t, name) for (x, y, t, name) in result_with_name]
+        
 
-        #强制校准我方随从在y轴的坐标     
-        result_with_name = [(x, 399+random.randint(-20, 20), t, name) for (x, y, t, name) in result_with_name]
-
-        return result_with_name
+        # 对最终结果去重筛选：green > yellow > normal
+        priority_type = {'green': 3, 'yellow': 2, 'normal': 1}
+        filtered_result = []
+        for x, y, color, name in result_with_name:
+            keep = True
+            for i, (fx, fy, fcolor, fname) in enumerate(filtered_result):
+                if abs(x - fx) < 30 and name == fname:
+                    if priority_type.get(color, 0) > priority_type.get(fcolor, 0):
+                        filtered_result[i] = (x, y, color, name)  # 用当前的替换
+                    keep = False  # 无论是否替换，都不追加当前
+                    break
+            if keep:
+                filtered_result.append((x, y, color, name))
+        filtered_result=sorted(filtered_result,key=lambda pos: pos[0])
+        self.device_state.logger.info(f"我方当前场上随从: {filtered_result}")
+                
+        return filtered_result
 
     def scan_shield_targets(self,debug_flag=False):
         """扫描护盾（多线程并发处理）"""
@@ -1142,23 +882,23 @@ class GameManager:
         
         shield_targets=[]
         
-        # 过滤final_shields，只保留与enemy_atk_positions中任意点x轴距离小于50像素的坐标
-        for shield_pos in final_shields:
+        # 过滤enemy_atk_positions，只保留与final_shields中任意点x轴距离小于50像素的坐标
+        for shield_pos in enemy_atk_positions:
             shield_x = shield_pos[0]
             # 检查是否与任意敌方随从位置的x轴距离小于50像素
-            for atk_pos in enemy_atk_positions:
+            for atk_pos in final_shields:
                 atk_x = atk_pos[0]
                 if abs(shield_x - atk_x) < 50:
                     shield_targets.append(shield_pos)
-                    break  # 找到一个匹配的敌方随从位置就足够了
+                    break  # 找到一个匹配到的就足够了
         
         # 按x轴排序，校准y轴坐标
         if shield_targets:
             shield_targets.sort(key=lambda pos: pos[0])  # 按x坐标排序
             # 校准所有护盾的y轴坐标
-            shield_targets = [(pos[0], 227+random.randint(-10,10)) for pos in shield_targets]
+            shield_targets = [(pos[0], 227+random.randint(-3,3)) for pos in shield_targets]
 
-        self.device_state.logger.info(f"护盾检测完成，检测到 {len(shield_targets)} 个护盾")
+        # self.device_state.logger.info(f"护盾检测完成，检测到 {len(shield_targets)} 个护盾")
 
         return shield_targets
 
@@ -1241,6 +981,46 @@ class GameManager:
                             logging.error(f"护盾debug图片保存失败: {filename}")
 
         return shield_targets
+
+    def card_can_choose_target_like_amulet(self,debug_flag=False):
+        """扫描敌方可攻击目标，比如护符"""
+        can_choosetargets = []
+        screenshot = self.device_state.take_screenshot()
+        if screenshot is None:
+            return []
+        can_choose_region = (160,302,1068,315)
+        region = screenshot.crop(can_choose_region)
+        bgr_image = cv2.cvtColor(np.array(region), cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2HSV)
+        lower_bound = np.array([4, 151, 28])
+        upper_bound = np.array([89, 255, 255])
+        mask = cv2.inRange(hsv, lower_bound, upper_bound)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            area = cv2.contourArea(cnt)
+            if 500 <area < 1200:
+                # 转换为全局坐标
+                cx, cy = x + w // 2, y + h // 2
+                global_x = can_choose_region[0] + cx
+                can_choosetargets.append((global_x, 216+random.randint(-5, 5)))
+            if debug_flag:
+                os.makedirs("debug", exist_ok=True)
+                timestamp = int(time.time() * 1000)
+                # 画出轮廓和中心点
+                debug_img = bgr_image.copy()
+                cv2.drawContours(debug_img, [cnt], 0, (0, 0, 255), 2)
+                cv2.circle(debug_img, (x, y), 10, (0, 0, 255), -1)
+                filename = f"debug/can_choose_target_{timestamp}_{x}_{y}.png"
+                result = cv2.imwrite(filename, debug_img)
+                if result:
+                    logging.info(f"can_choose_target图片已保存: {filename}")
+
+        if can_choosetargets:
+            can_choosetargets.sort(key=lambda pos: pos[0])
+
+
+        return can_choosetargets
 
     def detect_existing_match(self, gray_screenshot, templates):
         """检测是否已经在游戏中"""

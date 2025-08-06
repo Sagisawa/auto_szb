@@ -65,14 +65,13 @@ class GameActions:
         all_followers = self.follower_manager.get_positions()
 
         if shield_detected:
-            shield_queue = shield_targets.copy()
             max_attempts = 5  # 最多循环5次
             attempt_count = 0
 
-            while shield_queue and attempt_count < max_attempts:
+            while shield_targets and attempt_count < max_attempts:
                 attempt_count += 1
                 self.device_state.logger.info(f"破盾尝试第{attempt_count}/5次")
-                current_shield = shield_queue[0]
+                current_shield = shield_targets[-1]
                 shield_x, shield_y = current_shield
 
                 closest_follower = None
@@ -97,12 +96,12 @@ class GameActions:
                         else:
                             self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
                         human_like_drag(self.device_state.u2_device, closest_follower[0], closest_follower[1], shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                        time.sleep(0.5)
+                        time.sleep(1)
                         break  # 已攻击则跳出类型循环
 
                 if not closest_follower:
                     self.device_state.logger.info("没有可用的突进/疾驰随从攻击护盾")
-                    return  # 直接退出函数
+                    return # 退出循环
 
                 # 攻击后更新随从信息
                 new_screenshot = self.device_state.take_screenshot()
@@ -124,28 +123,12 @@ class GameActions:
                     return
 
                 # 重新扫描护盾，检查当前护盾是否还在
-                new_shields = self._scan_shield_targets()
-                shield_distance_threshold = POSITION_RANDOM_RANGE["large"]
-                shield_still_exists = any(
-                    abs(sx - shield_x) < shield_distance_threshold and abs(sy - shield_y) < shield_distance_threshold
-                    for sx, sy in new_shields
-                )
-
-                if shield_still_exists:
-                    self.device_state.logger.info("护盾仍然存在，继续破盾")
-                else:
-                    shield_queue.pop(0)
-
-                    # 更新护盾队列
-                    shield_queue = [
-                        s for s in new_shields
-                        if s not in shield_queue
-                    ]
-
+                shield_targets = self._scan_shield_targets()
+                
                 time.sleep(0.2)
             
             # 检查是否因为达到最大尝试次数而退出循环
-            if attempt_count >= max_attempts and shield_queue:
+            if attempt_count >= max_attempts :
                 self.device_state.logger.warning(f"达到最大破盾尝试次数({max_attempts}次)，停止破盾操作")
 
         # 没有护盾，使用绿色随从攻击敌方主人
@@ -165,7 +148,10 @@ class GameActions:
             yellow_followers = [(x, y, name) for x, y, t, name in all_followers if t == "yellow"]
             if yellow_followers:
                 for i, (x, y, name) in enumerate(yellow_followers):
-                    # 每次攻击前重新扫描敌方随从和血量
+                    # 检查是否是最后一个黄色随从
+                    is_last_yellow = (i == len(yellow_followers) - 1)
+                    
+                    # 每次攻击前都扫描敌方随从和血量
                     enemy_screenshot = self.device_state.take_screenshot()
                     if enemy_screenshot:
                         enemy_followers = self._scan_enemy_followers(enemy_screenshot)
@@ -178,11 +164,14 @@ class GameActions:
                                 else:
                                     self.device_state.logger.info("使用突进随从攻击敌方血量较小的随从")
                                 human_like_drag(self.device_state.u2_device, x, y, enemy_x, enemy_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                                time.sleep(0.45)
+                                time.sleep(1.5)
+                                
+                                # 如果是最后一个黄色随从，攻击完成后直接跳出循环，不再进行后续扫描
+                                if is_last_yellow:
+                                    break
+                                    
                             except Exception as e:
                                 self.device_state.logger.warning(f"突进敌方最小血量随从失败: {str(e)}")
-                        else:
-                            self.device_state.logger.info("没有检测到敌方随从，跳过攻击")
                     else:
                         self.device_state.logger.warning("截图失败，跳过攻击")
 
@@ -264,7 +253,7 @@ class GameActions:
                     if follower_name:
                         if is_evolve_priority_card(follower_name):
                             self.device_state.logger.info(f"优先超进化了[{follower_name}]")
-                        self.device_state.logger.info(f"超进化了[{follower_name}，剩余超进化次数：{self.device_state.super_evolution_point}")
+                        self.device_state.logger.info(f"超进化了[{follower_name}]，剩余超进化次数：{self.device_state.super_evolution_point}")
                     else:
                         self.device_state.logger.info(f"检测到超进化按钮并点击，剩余超进化次数：{self.device_state.super_evolution_point}")
                     time.sleep(3.5)
@@ -383,9 +372,9 @@ class GameActions:
         # 获取并发调用的敌方检测结果
         try:
             enemy_check = enemy_future.result()
-            self.device_state.logger.info(f"出牌前有 {len(enemy_check)} 个敌方随从")
+            # self.device_state.logger.info(f"出牌前有 {len(enemy_check)} 个敌方随从")
         except Exception as e:
-            self.device_state.logger.warning(f"敌方检测失败: {str(e)}")
+            self.device_state.logger.warning(f"敌方随从检测失败: {str(e)}")
             enemy_check = []
 
         # 获取随从位置
@@ -448,9 +437,9 @@ class GameActions:
         #获取并发调用的敌方检测结果
         try:
             enemy_check = enemy_future.result()
-            self.device_state.logger.info(f"出牌前有 {len(enemy_check)} 个敌方随从")
+            # self.device_state.logger.info(f"出牌前有 {len(enemy_check)} 个敌方随从")
         except Exception as e:
-            self.device_state.logger.warning(f"敌方检测失败: {str(e)}")
+            self.device_state.logger.warning(f"敌方随从检测失败: {str(e)}")
             enemy_check = []
 
         # 获取随从位置和类型
@@ -460,7 +449,36 @@ class GameActions:
             self.follower_manager.update_positions(our_followers_positions)
         
 
-        if self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0:
+        # 进化/超进化条件判断：敌方有随从，或者我方绿色疾驰随从，或者有优先进化随从
+        should_evolve = False
+        
+        # 检查敌方现在是否有随从
+        screenshot = self.device_state.take_screenshot()
+        if screenshot:
+            enemy_followers = self._scan_enemy_ATK(screenshot)
+            if enemy_followers and (self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0):
+                should_evolve = True
+                self.device_state.logger.info(f"检测到敌方随从，满足进化/超进化条件")
+        
+        # 检查我方是否有绿色疾驰随从
+        if not should_evolve:
+            our_followers = self.follower_manager.get_positions()
+            green_followers = [f for f in our_followers if f[2] == "green"]
+            if green_followers and (self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0):
+                should_evolve = True
+                self.device_state.logger.info(f"检测到我方疾驰随从，满足进化/超进化条件")
+        
+        # 检查是否有优先进化随从
+        if not should_evolve:
+            our_followers = self.follower_manager.get_positions()
+            for follower in our_followers:
+                follower_name = follower[3] if len(follower) > 3 else None
+                if follower_name and is_evolve_priority_card(follower_name) and (self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0):
+                    should_evolve = True
+                    self.device_state.logger.info(f"检测到优先进化随从[{follower_name}]，满足进化/超进化条件")
+                    break
+        
+        if (self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0) and should_evolve:
             self.perform_evolution_actions()
             # 等待最终进化/超进化动画完成
             time.sleep(3)
@@ -472,21 +490,17 @@ class GameActions:
             )
             time.sleep(1)
 
-        # 获取进化后的随从位置和类型
-        screenshot = self.device_state.take_screenshot()
-        if screenshot:
-            our_followers_positions = self._scan_our_followers(screenshot)
-            self.follower_manager.update_positions(our_followers_positions)
+            # 获取进化/超进化后的随从位置和类型
+            screenshot = self.device_state.take_screenshot()
+            if screenshot:
+                our_followers_positions = self._scan_our_followers(screenshot)
+                self.follower_manager.update_positions(our_followers_positions)
 
-        
-            
 
         # 检查是否有疾驰或突进随从
         can_attack_followers = self.follower_manager.get_positions()
         can_attack_followers = [f for f in can_attack_followers if f[2] in ['green', 'yellow']]
 
-        
-        
         if can_attack_followers:
             self.perform_follower_attacks(enemy_check)
         else:
@@ -1151,8 +1165,9 @@ class GameActions:
     def _ssim_match_digit(self, digit_roi, device_state=None, debug_flag=False, digit_index=1):
         """使用SSIM相似度匹配单个数字"""
         try:
-            # 加载0-9的数字模板
-            template_dir = "templates/cost_numbers"
+            # 使用template_manager中已经设置好的模板目录
+            templates_dir = self.device_state.game_manager.template_manager.templates_dir
+            template_dir = f"{templates_dir}/cost_numbers"
             best_cost = 0
             best_ssim = 0.0
             best_template_path = ""

@@ -156,7 +156,7 @@ class CardPlaySpecialActions:
             self.device_state.u2_device.click(shield_x, shield_y)
             self.device_state.logger.info(f"点击护盾随从位置: ({shield_x}, {shield_y})")
         else:
-            self.device_state.logger.info("未检测到护盾，划出卡牌后破坏血量最高的敌方随从")
+            self.device_state.logger.info("未检测到护盾，尝试检测血量最高的敌方随从")
             # 划出卡牌
             human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
             time.sleep(0.2)  # 等待0.2秒
@@ -177,7 +177,27 @@ class CardPlaySpecialActions:
                     except Exception as e:
                         self.device_state.logger.warning(f"选择敌方随从时出错: {str(e)}")
                 else:
-                    self.device_state.logger.info("未检测到敌方随从")
+                    player_x = DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+                    player_y = DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+                    self.device_state.logger.info("未检测到敌方随从，尝试检测敌方护符或者其他可选择目标")
+                    time.sleep(0.5)  # 等待0.几秒
+                    can_choosetargets = self.device_state.game_manager.card_can_choose_target_like_amulet()
+                    if can_choosetargets:
+                        for pos in can_choosetargets:
+                            self.device_state.u2_device.click(pos[0], pos[1])
+                            time.sleep(0.1)
+
+                        self.device_state.u2_device.click(645+random.randint(-3, 3),232+random.randint(-2, 2))
+                        time.sleep(0.1)
+                        self.device_state.u2_device.click(player_x+random.randint(-3, 3), player_y+random.randint(-2, 2))
+                        self.device_state.logger.info(f"选择了一个可破坏目标(护符之类)")
+                    else:
+                        self.device_state.u2_device.click(645+random.randint(-3, 3),232+random.randint(-2, 2))
+                        time.sleep(0.1)
+                        self.device_state.u2_device.click(player_x+random.randint(-3, 3), player_y+random.randint(-2, 2))
+                        self.device_state.logger.info("未检测到可破坏目标")
+
+
         time.sleep(2.7)
     
     def _handle_shield_or_highest_hp_noenemy_retrun_point_target(self, card_name, center_x, center_y, target_x):
@@ -251,7 +271,7 @@ class CardPlaySpecialActions:
                 # 没有血量小于5的随从，检查是否有其他敌方随从
                 if enemy_followers:
                     # 有敌方随从，选择血量最大的
-                    self.device_state.logger.info(f"[划出{card_name}]，未检测到血量小于5的敌方随从，选择血量最大的敌方随从")
+                    self.device_state.logger.info(f"划出[{card_name}]，未检测到血量小于5的敌方随从，选择血量最大的敌方随从")
                     # 划出该手牌
                     human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
                     time.sleep(0.3)
@@ -263,13 +283,13 @@ class CardPlaySpecialActions:
                         enemy_x = int(enemy_x)
                         enemy_y = int(enemy_y)
                         self.device_state.u2_device.click(enemy_x, enemy_y)
-                        self.device_state.logger.info(f"[划出{card_name}]，点击血量最大的敌方随从: ({enemy_x}, {enemy_y}) HP={hp}")
+                        self.device_state.logger.info(f"划出[{card_name}]，点击血量最大的敌方随从: ({enemy_x}, {enemy_y}) HP={hp}")
                     except Exception as e:
-                        self.device_state.logger.warning(f"[划出{card_name}]，选择敌方随从时出错: {str(e)}")
+                        self.device_state.logger.warning(f"划出[{card_name}]，选择敌方随从时出错: {str(e)}")
                     time.sleep(0.2)
                 else:
                     # 一个敌方随从都没有，点击指定位置
-                    self.device_state.logger.info(f"[划出{card_name}]，未检测到任何敌方随从")
+                    self.device_state.logger.info(f"划出[{card_name}]，未检测到任何敌方随从")
                     # 划出该手牌
                     human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
                     time.sleep(0.2)

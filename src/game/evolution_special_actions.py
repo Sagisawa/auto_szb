@@ -14,8 +14,7 @@ logger = logging.getLogger(__name__)
 # 进化/超进化后需要特殊操作的卡牌
 EVOLVE_SPECIAL_ACTIONS = {
     "铁拳神父": {
-        "action": "attack_enemy_follower_hp_less_than_4",  # 进化后点击一个血量小于4的敌方随从
-        "super_evolution_action": "attack_two_enemy_followers_hp_less_than_4"   # 超进化后点击两个血量小于4的敌方随从
+        "action": "attack_enemy_follower_hp_less_than_4"  # 进化后点击一个血量小于4的敌方随从
     },
     "爽朗的天宫菲尔德亚": {
         "action": "attack_two_enemy_followers_hp_highest",  # 进化后点击一个血量最高的敌方随从
@@ -175,6 +174,7 @@ class EvolutionSpecialActions:
                     self.device_state.logger.info(f"[{follower_name}]{evolution_type}后未检测到可选择进化的我方随从")
         else:
             self.device_state.logger.info(f"[{follower_name}]{evolution_type}后未检测到我方随从")
+        time.sleep(1)
     
     def _handle_attack_enemy_follower_hp_less_than_4(self, follower_name):
         """处理攻击HP<=3的敌方随从"""
