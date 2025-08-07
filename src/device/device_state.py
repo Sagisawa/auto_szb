@@ -150,6 +150,43 @@ class DeviceState:
         if self.adb_device is None:
             return None
 
+        # try:
+        #     screenshot = self.adb_device.screenshot()
+        #     if screenshot is not None:
+        #         # 转换为numpy数组进行亮度调整
+        #         import numpy as np
+        #         import cv2
+                
+        #         # 将PIL图像转换为numpy数组
+        #         img_array = np.array(screenshot)
+                
+        #         # 转换为BGR格式（OpenCV默认格式）
+        #         if len(img_array.shape) == 3:
+        #             img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+                
+        #         # 转换为HSV色彩空间并分离通道
+        #         img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+        #         h, s, v = cv2.split(img_hsv)
+                
+        #         # 仅对V通道增加50（确保不超过255）
+        #         v = cv2.add(v, 30)
+                
+        #         # 合并通道并转回BGR
+        #         img_hsv_adjusted = cv2.merge([h, s, v])
+        #         img_bgr_adjusted = cv2.cvtColor(img_hsv_adjusted, cv2.COLOR_HSV2BGR)
+                
+        #         # 转换回RGB格式
+        #         img_rgb = cv2.cvtColor(img_bgr_adjusted, cv2.COLOR_BGR2RGB)
+                
+        #         # 转换回PIL图像
+        #         from PIL import Image
+        #         return Image.fromarray(img_rgb)
+        #     else:
+        #         return None
+        # except Exception as e:
+        #     self.logger.error(f"截图失败: {str(e)}")
+        #     return None
+
         try:
             screenshot = self.adb_device.screenshot()
             if screenshot is not None:
@@ -166,8 +203,8 @@ class DeviceState:
                 else:
                     img_bgr = img_array
                 
-                # 提高亮度43
-                brightness = 43
+                # 提高亮度50
+                brightness = 20
                 img_brightened = cv2.add(img_bgr, brightness)
                 
                 # 转换回RGB格式

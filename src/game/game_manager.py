@@ -107,9 +107,6 @@ class GameManager:
 
         return enemy_atk_positions 
 
-        
-        
-
     
     def scan_enemy_followers(self, screenshot, debug_flag=False):
         """检测场上的敌方随从位置与血量"""
@@ -283,16 +280,24 @@ class GameManager:
             settings = OUR_FOLLOWER_HSV
             lower_green = np.array(settings["green"][:3])
             upper_green = np.array(settings["green"][3:])
+            lower_green2 = np.array(settings["green2"][:3])
+            upper_green2 = np.array(settings["green2"][3:])
+            green2_mask = cv2.inRange(hsv_color, lower_green2, upper_green2)
             lower_yellow1 = np.array(settings["yellow1"][:3])
             upper_yellow1 = np.array(settings["yellow1"][3:])
+            lower_yellow2 = np.array(settings["yellow2"][:3])
+            upper_yellow2 = np.array(settings["yellow2"][3:])
             lower_blue = np.array(settings["blue"][:3])
             upper_blue = np.array(settings["blue"][3:])
             green_mask = cv2.inRange(hsv_color, lower_green, upper_green)
             yellow1_mask = cv2.inRange(hsv_color, lower_yellow1, upper_yellow1)
+            yellow2_mask = cv2.inRange(hsv_color, lower_yellow2, upper_yellow2)
             blue_mask = cv2.inRange(hsv_blue, lower_blue, upper_blue)
             kernel = np.ones((1, 1), np.uint8)
             green_eroded = cv2.erode(cv2.dilate(green_mask, kernel, iterations=1), kernel, iterations=1)
+            green2_eroded = cv2.erode(cv2.dilate(green2_mask, kernel, iterations=1), kernel, iterations=1)
             yellow1_eroded = cv2.erode(cv2.dilate(yellow1_mask, kernel, iterations=1), kernel, iterations=1)
+            yellow2_eroded = cv2.erode(cv2.dilate(yellow2_mask, kernel, iterations=1), kernel, iterations=1)
             blue_eroded = cv2.erode(cv2.dilate(blue_mask, kernel, iterations=1), kernel, iterations=1)
 
             from concurrent.futures import ThreadPoolExecutor
@@ -300,10 +305,14 @@ class GameManager:
                 return cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future_green = executor.submit(find_contours, green_eroded)
+                future_green2 = executor.submit(find_contours, green2_eroded)
                 future_yellow1 = executor.submit(find_contours, yellow1_eroded)
+                future_yellow2 = executor.submit(find_contours, yellow2_eroded)
                 future_blue = executor.submit(find_contours, blue_eroded)
                 green_contours = future_green.result()
+                green2_contours = future_green2.result()
                 yellow1_contours = future_yellow1.result()
+                yellow2_contours = future_yellow2.result()
                 blue_contours = future_blue.result()
             follower_positions = []
             green_rects = []
@@ -414,6 +423,80 @@ class GameManager:
                             cv2.circle(debug_img_color, (debug_cx, debug_cy), 5, (0, 0, 255), -1)
                             label = f"W:{w:.1f} H:{h:.1f} Area:{area:.0f}"
                             cv2.putText(debug_img_color, label, (debug_cx, debug_cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
+            for cnt in green2_contours:
+                rect = cv2.minAreaRect(cnt)
+                (x, y), (w, h), angle = rect
+                area = cv2.contourArea(cnt)
+                min_dim = min(w, h)
+                max_dim = max(w, h)
+                if max_dim > 230:
+                    # 1. 提取该轮廓的mask
+                    mask = np.zeros(region_color_cv.shape[:2], np.uint8)
+                    cv2.drawContours(mask, [cnt], -1, 255, -1)
+                    # 2. 距离变换
+                    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+                    ret, sure_fg = cv2.threshold(dist, 0.5*dist.max(), 255, 0)
+                    sure_fg = np.uint8(sure_fg)
+                    # 3. 连通域
+                    ret, markers = cv2.connectedComponents(sure_fg)
+                    markers = markers + 1
+                    markers[mask == 0] = 0
+                    # 4. 分水岭
+                    color_img = region_color_cv.copy()
+                    cv2.watershed(color_img, markers)
+                    # 5. 提取分割后每个目标的中心点
+                    for label in range(2, np.max(markers)+1):
+                        pts = np.column_stack(np.where(markers == label))
+                        if len(pts) == 0:
+                            continue
+                        cy, cx = np.mean(pts, axis=0)
+                        center_x_full = cx + 176
+                        center_y_full = cy + 295
+                        # 绿色随从去重检查（分水岭分割后）
+                        is_duplicate = False
+                        for gx, gy in green_centers:
+                            if abs(center_x_full - gx) < 50:
+                                is_duplicate = True
+                                break
+                        if is_duplicate:
+                            continue
+                        green_centers.append((center_x_full, center_y_full))
+                        follower_positions.append((center_x_full, center_y_full, "green"))
+                        if debug_flag:
+                            # 调整debug坐标，因为debug图像包含了更大的区域
+                            debug_cx = int(cx)
+                            debug_cy = int(cy) + 30  # 向下偏移30像素
+                            cv2.circle(debug_img_color, (debug_cx, debug_cy), 7, (0, 255, 255), 2)
+                    continue  # 分水岭后不再走后续逻辑
+                if 150 > max_dim > 90 or 230 > max_dim > 200:
+                    center_x, center_y = rect[0]
+                    center_x_full = center_x + 176
+                    center_y_full = center_y + 295
+                    is_duplicate = False
+                    for gx, gy in green_centers:
+                        if abs(center_x_full - gx) < 50:
+                            is_duplicate = True
+                            break
+                    if is_duplicate:
+                        continue
+                    follower_positions.append((center_x_full, center_y_full, "green"))
+                    box = cv2.boxPoints(rect)
+                    green_rects.append(box)
+                    if debug_flag:
+                        box = cv2.boxPoints(rect)
+                        box = box.astype(np.int32)
+                        # 调整debug坐标，因为debug图像包含了更大的区域
+                        debug_box = box.copy()
+                        debug_box[:, 1] += 30  # Y坐标向下偏移30像素
+                        cv2.drawContours(debug_img_color, [debug_box], 0, (0, 255, 0), 2)
+                        cx, cy = int(center_x), int(center_y)
+                        # 调整debug坐标，因为debug图像包含了更大的区域
+                        debug_cx = cx
+                        debug_cy = cy + 30  # 向下偏移30像素
+                        cv2.circle(debug_img_color, (debug_cx, debug_cy), 5, (0, 0, 255), -1)
+                        label = f"W:{w:.1f} H:{h:.1f} Area:{area:.0f}"
+                        cv2.putText(debug_img_color, label, (debug_cx, debug_cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
             # 处理黄色框
             for cnt in yellow1_contours:
                 rect = cv2.minAreaRect(cnt)
@@ -487,6 +570,88 @@ class GameManager:
                             break
                     follower_type = "green" if is_inside_green else "yellow"
                     follower_positions.append((center_x_full, center_y_full, follower_type))
+                    if debug_flag:
+                        box = cv2.boxPoints(rect)
+                        box = box.astype(np.int32)
+                        # 调整debug坐标，因为debug图像包含了更大的区域
+                        debug_box = box.copy()
+                        debug_box[:, 1] += 30  # Y坐标向下偏移30像素
+                        cv2.drawContours(debug_img_color, [debug_box], 0, (0, 255, 255), 2)
+                        cx, cy = int(center_x), int(center_y)
+                        # 调整debug坐标，因为debug图像包含了更大的区域
+                        debug_cx = cx
+                        debug_cy = cy + 30  # 向下偏移30像素
+                        cv2.circle(debug_img_color, (debug_cx, debug_cy), 5, (0, 0, 255), -1)
+                        label = f"W:{w:.1f} H:{h:.1f} Area:{area:.0f}"
+                        cv2.putText(debug_img_color, label, (debug_cx, debug_cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+            
+            for cnt in yellow2_contours:
+                rect = cv2.minAreaRect(cnt)
+                (x, y), (w, h), angle = rect
+                area = cv2.contourArea(cnt)
+                min_dim = min(w, h)
+                max_dim = max(w, h)
+                if max_dim > 230:
+                    # 1. 提取该轮廓的mask
+                    mask = np.zeros(region_color_cv.shape[:2], np.uint8)
+                    cv2.drawContours(mask, [cnt], -1, 255, -1)
+                    # 2. 距离变换
+                    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+                    ret, sure_fg = cv2.threshold(dist, 0.5*dist.max(), 255, 0)
+                    sure_fg = np.uint8(sure_fg)
+                    # 3. 连通域
+                    ret, markers = cv2.connectedComponents(sure_fg)
+                    markers = markers + 1
+                    markers[mask == 0] = 0
+                    # 4. 分水岭
+                    color_img = region_color_cv.copy()
+                    cv2.watershed(color_img, markers)
+                    # 5. 提取分割后每个目标的中心点
+                    for label in range(2, np.max(markers)+1):
+                        pts = np.column_stack(np.where(markers == label))
+                        if len(pts) == 0:
+                            continue
+                        cy, cx = np.mean(pts, axis=0)
+                        center_x_full = cx + 176
+                        center_y_full = cy + 295
+                        # 判断是否在绿色框内
+                        is_inside_green = False
+                        for g_box in green_rects:
+                            g_box_full = g_box.copy()
+                            g_box_full[:, 0] += 176
+                            g_box_full[:, 1] += 295
+                            if cv2.pointPolygonTest(g_box_full, (center_x_full, center_y_full), False) >= 0:
+                                is_inside_green = True
+                                break
+                        if is_inside_green:
+                            continue  # 跳过该黄色点
+                        # 黄色随从去重检查（分水岭分割后）
+                        is_duplicate = False
+                        for yx, yy in yellow_centers:
+                            if abs(center_x_full - yx) < 50:
+                                is_duplicate = True
+                                break
+                        if is_duplicate:
+                            continue
+                        follower_positions.append((center_x_full, center_y_full, "yellow"))
+                        yellow_centers.append((center_x_full, center_y_full))
+                        if debug_flag:
+                            cv2.circle(debug_img_color, (int(cx), int(cy)), 7, (0, 255, 255), 2)
+                    continue  # 分水岭后不再走后续逻辑
+                if 120 > max_dim > 90 or 230 > max_dim > 200 :
+                    center_x, center_y = rect[0]
+                    center_x_full = center_x + 176
+                    center_y_full = center_y + 295
+                    # 黄色随从去重检查
+                    is_duplicate = False
+                    for yx, yy in yellow_centers:
+                        if abs(center_x_full - yx) < 50:
+                            is_duplicate = True
+                            break
+                    if is_duplicate:
+                        continue
+                    follower_positions.append((center_x_full, center_y_full, "yellow"))
+                    yellow_centers.append((center_x_full, center_y_full))
                     if debug_flag:
                         box = cv2.boxPoints(rect)
                         box = box.astype(np.int32)
@@ -606,7 +771,7 @@ class GameManager:
             found = False
             for existing_rect in deduplicated_follower_positions:
                 (ex1, ey1), (ex2, ey2) = existing_rect
-                if abs(x1 - ex1) < 54:  # 左上角x轴距离小于54像素
+                if abs(x1 - ex1) < 50:  # 左上角x轴距离小于50像素
                     found = True
                     break
             if not found:
@@ -785,42 +950,42 @@ class GameManager:
             x=int(x)
             name = None
             best_match_distance = float('inf')
-            
-            # 在SIFT结果中寻找最近的匹配（x轴距离在30像素内）
+            # 在SIFT结果中寻找最近的匹配（x轴距离在50像素内）
             for sift_item in sift_results:
                 cx, cy, sift_name = sift_item
                 x_distance = abs(cx - x)
-                if x_distance < 30 and x_distance < best_match_distance:
+                if x_distance < 50 and x_distance < best_match_distance:
                     name = sift_name
                     best_match_distance = x_distance
-            
             # 检查x, y是否为NaN，若是则跳过
             import numpy as np
             if np.isnan(x) or np.isnan(y):
                 continue
             result_with_name.append((x, y, t, name))
-        
         # 强制校准我方随从在y轴的坐标
         result_with_name = [(x, 399+random.randint(-7, 7), t, name) for (x, y, t, name) in result_with_name]
-        
 
-        # 对最终结果去重筛选：green > yellow > normal
-        priority_type = {'green': 3, 'yellow': 2, 'normal': 1}
-        filtered_result = []
-        for x, y, color, name in result_with_name:
-            keep = True
-            for i, (fx, fy, fcolor, fname) in enumerate(filtered_result):
-                if abs(x - fx) < 30 and name == fname:
-                    if priority_type.get(color, 0) > priority_type.get(fcolor, 0):
-                        filtered_result[i] = (x, y, color, name)  # 用当前的替换
-                    keep = False  # 无论是否替换，都不追加当前
-                    break
-            if keep:
-                filtered_result.append((x, y, color, name))
-        filtered_result=sorted(filtered_result,key=lambda pos: pos[0])
-        self.device_state.logger.info(f"我方当前场上随从: {filtered_result}")
+
+
+        # # 横向x坐标上相距不超过 30 像素的随从，视为同一个，保留优先级最高的随从
+        # priority_type = {'green': 3, 'yellow': 2, 'normal': 1}
+        # # 按优先级从高到低排序
+        # result_with_name.sort(key=lambda x: -priority_type.get(x[2], 0))
+        # filtered_result = []
+        # for x, y, color, name in result_with_name:
+        #     is_duplicate = False
+        #     for i, (fx, fy, fcolor, fname) in enumerate(filtered_result):
+        #         if abs(x - fx) < 30:
+        #             # 已存在一个位置非常接近的随从，认为是同一个，跳过当前（因为当前优先级低）
+        #             is_duplicate = True
+        #             break
+        #     if not is_duplicate:
+        #         filtered_result.append((x, y, color, name))
+        # 最后按x坐标排序（从左到右）
+        result_with_name = sorted(result_with_name, key=lambda pos: pos[0])
+        self.device_state.logger.info(f"我方当前场上随从: {result_with_name}")
                 
-        return filtered_result
+        return result_with_name
 
     def scan_shield_targets(self,debug_flag=False):
         """扫描护盾（多线程并发处理）"""
@@ -843,8 +1008,6 @@ class GameManager:
         if images:
             last_screenshot = self.device_state.take_screenshot()
         
-        if not images or last_screenshot is None:
-            return []  # 如果没有图像，直接返回空列表
             
         # 使用线程池并行处理攻击力检测和护盾检测
         with ThreadPoolExecutor(max_workers=6) as executor:
@@ -946,7 +1109,7 @@ class GameManager:
             min_dim = min(w, h)
             max_dim = max(w, h)
             
-            if  (140>max_dim >80 and 72>min_dim>55 and area > 700) :
+            if  (150>max_dim >70 and 75>min_dim>50 and area > 700) :
                 cx, cy = x + w // 2, y + h // 2
                 # 自动转换为全屏坐标
                 global_cx = cx + offset_x
