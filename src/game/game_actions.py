@@ -96,36 +96,29 @@ class GameActions:
                         else:
                             self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
                         human_like_drag(self.device_state.u2_device, closest_follower[0], closest_follower[1], shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                        time.sleep(1)
+                        # 等待画面稳定
+                        from src.utils.utils import wait_for_screen_stable
+                        wait_for_screen_stable(self.device_state)
                         break  # 已攻击则跳出类型循环
 
                 if not closest_follower:
                     self.device_state.logger.info("没有可用的突进/疾驰随从攻击护盾")
                     return # 退出循环
 
-                # 攻击后更新随从信息
-                time.sleep(1)
                 new_screenshot = self.device_state.take_screenshot()
                 if new_screenshot:
                     new_followers = self._scan_our_followers(new_screenshot)
                     self.follower_manager.update_positions(new_followers)
                     all_followers = new_followers
 
-                # 检查更新后的随从是否还有突进/疾驰能力，没有则直接返回
-                has_attack_followers = False
-                for type_priority in ["yellow", "green"]:
-                    type_followers = [(x, y, name) for x, y, t, name in all_followers if t == type_priority]
-                    if type_followers:
-                        has_attack_followers = True
-                        break
-
-                if not has_attack_followers:
-                    self.device_state.logger.info("攻击后没有可用的突进/疾驰随从，停止破盾")
-                    return
-
                 # 重新扫描护盾，检查当前护盾是否还在
                 shield_targets = self._scan_shield_targets()
-                
+                if shield_targets:
+                    self.device_state.logger.info("护盾还在，继续破盾")
+                else:
+                    self.device_state.logger.info("护盾已消失，停止破盾")
+                    break
+
                 time.sleep(0.1)
             
             # 检查是否因为达到最大尝试次数而退出循环
@@ -154,7 +147,7 @@ class GameActions:
                         pass  # 不攻击，跳过
                     else:
                         for i in range(extra_attack_times_map[name]):
-                            time.sleep(0.4)
+                            time.sleep(0.3)
                             human_like_drag(
                                 self.device_state.u2_device,
                                 x, y, target_x, target_y,
@@ -199,7 +192,10 @@ class GameActions:
                     enemy_x, enemy_y,
                     duration=random.uniform(*settings.get_human_like_drag_duration_range())
                 )
-                time.sleep(2)
+                # 等待画面稳定
+                from src.utils.utils import wait_for_screen_stable
+                wait_for_screen_stable(self.device_state)
+
         
             except Exception as e:
                 self.device_state.logger.warning(f"突进敌方最小血量随从失败: {str(e)}")
@@ -304,9 +300,9 @@ class GameActions:
                         self._handle_evolve_special_action(follower_name, pos, is_super_evolution=True, existing_followers=all_followers)
                     # 如果超进化到突进或者普通随从，则再检查无护盾后攻击敌方随从
                     if follower_type in ["yellow", "normal"]:
-                        # 等待超进化动画完成
-                        time.sleep(1)
-                        
+                        # 等待画面稳定
+                        from src.utils.utils import wait_for_screen_stable
+                        wait_for_screen_stable(self.device_state)
                         # 检查敌方护盾
                         shield_targets = self._scan_shield_targets()
                         shield_detected = bool(shield_targets)
@@ -359,7 +355,7 @@ class GameActions:
                         self._handle_evolve_special_action(follower_name, pos, is_super_evolution=False, existing_followers=all_followers)
                 break
             time.sleep(0.01)
-        time.sleep(2)  # 短暂等待
+
 
     def _handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False, existing_followers=None):
         """
@@ -386,11 +382,9 @@ class GameActions:
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
         
-        
-        
         #移除手牌光标提高识别率
         self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-        time.sleep(0.3)
+        time.sleep(0.2)
         
         # 获取截图
         screenshot = self.device_state.take_screenshot()
@@ -399,7 +393,9 @@ class GameActions:
         
         # 执行出牌逻辑
         self._play_cards(image)
-        time.sleep(1)
+        # 等待画面稳定
+        from src.utils.utils import wait_for_screen_stable
+        wait_for_screen_stable(self.device_state)
 
         # 点击绝对无遮挡处关闭可能扰乱识别的面板
         from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
@@ -407,8 +403,7 @@ class GameActions:
             BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
             BLANK_CLICK_POSITION[1] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM)
         )
-        time.sleep(1.5)
-
+        time.sleep(0.1)
 
         # 获取并发调用的敌方检测结果
         try:
@@ -432,8 +427,7 @@ class GameActions:
             self.perform_follower_attacks(enemy_check)
         else:
             self.device_state.logger.info("未检测到可进行攻击的随从，跳过攻击操作")
-
-        time.sleep(1)
+        time.sleep(0.2)
 
     def perform_fullPlus_actions(self):
         """执行进化/超进化与攻击操作"""
@@ -448,10 +442,8 @@ class GameActions:
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
-        time.sleep(0.2)
-        #移除手牌光标提高识别率
         self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-        time.sleep(0.3)
+        
 
         # 获取截图
         screenshot = self.device_state.take_screenshot()
@@ -465,7 +457,10 @@ class GameActions:
 
         # 执行出牌逻辑
         self._play_cards(image)
-        time.sleep(1)
+
+        # 等待画面稳定
+        from src.utils.utils import wait_for_screen_stable
+        wait_for_screen_stable(self.device_state)
 
         # # 点击绝对无遮挡处关闭可能扰乱识别的面板
         from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
@@ -473,7 +468,7 @@ class GameActions:
             BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
             BLANK_CLICK_POSITION[1] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM)
         )
-        time.sleep(2)
+        time.sleep(1)
 
         #获取并发调用的敌方检测结果
         try:
@@ -521,15 +516,16 @@ class GameActions:
         
         if  we_have_follower and ((self.device_state.evolution_point > 0 or self.device_state.super_evolution_point > 0)) and should_evolve:
             self.perform_evolution_actions()
-            # 等待最终进化/超进化动画完成
-            time.sleep(1)
+            # 等待画面稳定
+            from src.utils.utils import wait_for_screen_stable
+            wait_for_screen_stable(self.device_state)
             # 点击空白处关闭面板
             from src.config.game_constants import BLANK_CLICK_POSITION, BLANK_CLICK_RANDOM
             self.device_state.u2_device.click(
                 BLANK_CLICK_POSITION[0] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM),
                 BLANK_CLICK_POSITION[1] + random.randint(-BLANK_CLICK_RANDOM, BLANK_CLICK_RANDOM)
             )
-            time.sleep(5)
+            time.sleep(0.2)
 
             # 获取进化/超进化后的随从位置和类型
             new_screenshot = self.device_state.take_screenshot()
@@ -547,7 +543,7 @@ class GameActions:
         else:
             self.device_state.logger.info("未检测到可进行攻击的随从，跳过攻击操作")
 
-        time.sleep(1)
+        time.sleep(0.3)
 
 
 
@@ -558,9 +554,9 @@ class GameActions:
         available_cost = min(10, current_round)  # 基础费用 = 当前回合数（最大10）
         
         # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
-        if self.hand_manager.recognize_hand_shield_card():
-            self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-            return
+        # if self.hand_manager.recognize_hand_shield_card():
+        #     self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
+        #     return
         
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:

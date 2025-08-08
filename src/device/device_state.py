@@ -204,7 +204,7 @@ class DeviceState:
                     img_bgr = img_array
                 
                 # 提高亮度50
-                brightness = 20
+                brightness = 43
                 img_brightened = cv2.add(img_bgr, brightness)
                 
                 # 转换回RGB格式
