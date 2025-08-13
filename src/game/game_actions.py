@@ -22,6 +22,7 @@ import math
 from src.config.card_priorities import get_card_priority, is_evolve_priority_card, get_evolve_priority_cards, is_evolve_special_action_card, get_evolve_special_actions
 from src.config.config_manager import ConfigManager
 import glob
+from src.utils.follower_utils import get_follower_attack, get_follower_hp
 
 logger = logging.getLogger(__name__)
 
@@ -65,43 +66,61 @@ class GameActions:
         all_followers = self.follower_manager.get_positions()
 
         if shield_detected:
-            max_attempts = 5  # 最多循环5次
+            max_attempts = 7  # 最多循环7次
             attempt_count = 0
+
+            # 在循环外扫描一次我方所有随从的攻击力和血量
+            our_followers_stats = self._scan_our_ATK_AND_HP(self.device_state.take_screenshot())
 
             while shield_targets and attempt_count < max_attempts:
                 attempt_count += 1
-                self.device_state.logger.info(f"破盾尝试第{attempt_count}/5次")
+                self.device_state.logger.info(f"破盾尝试第{attempt_count}/7次")
                 current_shield = shield_targets[-1]
                 shield_x, shield_y = current_shield
 
-                closest_follower = None
-                closest_follower_name = None
+                # 获取敌方随从信息以确定护盾血量
+                enemy_followers = self._scan_enemy_followers(self.device_state.take_screenshot())
+                closest_enemy = min(enemy_followers, key=lambda f: abs(f[0] - shield_x)) if enemy_followers else None
+                shield_hp = int(closest_enemy[3]) if closest_enemy and closest_enemy[3].isdigit() else 99
+
+                best_follower_to_attack = None
+                best_priority = 999
+
                 for type_priority in ["yellow", "green"]:
                     type_followers = [(x, y, name) for x, y, t, name in all_followers if t == type_priority]
                     if not type_followers:
                         continue
 
-                    # 选择离护盾最近的该类型随从
-                    min_distance = float('inf')
                     for fx, fy, fname in type_followers:
-                        dist = ((fx - shield_x) ** 2 + (fy - shield_y) ** 2) ** 0.5
-                        if dist < min_distance:
-                            min_distance = dist
-                            closest_follower = (fx, fy)
-                            closest_follower_name = fname
-                    if closest_follower:
-                        type_name = type_name_map.get(type_priority, type_priority)
-                        if closest_follower_name:
-                            self.device_state.logger.info(f"使用{type_name}随从[{closest_follower_name}]攻击护盾")
+                        closest_stat = min(our_followers_stats, key=lambda stat: abs(stat[0] - fx)) if our_followers_stats else None
+                        if closest_stat:
+                            follower_attack = int(closest_stat[2]) if str(closest_stat[2]).isdigit() else 1
                         else:
-                            self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
-                        human_like_drag(self.device_state.u2_device, closest_follower[0], closest_follower[1], shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                        # 等待画面稳定
-                        from src.utils.utils import wait_for_screen_stable
-                        wait_for_screen_stable(self.device_state)
-                        break  # 已攻击则跳出类型循环
+                            follower_attack = 1
+                        
+                        if follower_attack == shield_hp:
+                            priority = 0
+                        elif follower_attack > shield_hp:
+                            priority = 1
+                        else:
+                            priority = 2
 
-                if not closest_follower:
+                        if priority < best_priority:
+                            best_priority = priority
+                            best_follower_to_attack = (fx, fy, fname, type_priority, follower_attack)
+
+                if best_follower_to_attack:
+                    fx, fy, fname, ftype, f_atk = best_follower_to_attack
+                    type_name = type_name_map.get(ftype, ftype)
+                    if fname:
+                        self.device_state.logger.info(f"使用{type_name}随从[{fname}](攻击力:{f_atk})攻击护盾(血量:{shield_hp})")
+                    else:
+                        self.device_state.logger.info(f"使用{type_name}随从攻击护盾")
+                    human_like_drag(self.device_state.u2_device, fx, fy, shield_x, shield_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
+                    from src.utils.utils import wait_for_screen_stable
+                    wait_for_screen_stable(self.device_state)
+                else:
+                    # 如果没有找到任何可以攻击的随从
                     self.device_state.logger.info("没有可用的突进/疾驰随从攻击护盾")
                     return # 退出循环
 
@@ -147,22 +166,29 @@ class GameActions:
                         pass  # 不攻击，跳过
                     else:
                         for i in range(extra_attack_times_map[name]):
-                            time.sleep(0.3)
+                            time.sleep(0.4)
                             human_like_drag(
                                 self.device_state.u2_device,
                                 x, y, target_x, target_y,
                                 duration=random.uniform(*settings.get_human_like_drag_duration_range())
                             )
                             if extra_attack_times_map[name] == 1:
-                                self.device_state.logger.info(f"使用疾驰随从[{name}第二次攻击敌方玩家")
+                                self.device_state.logger.info(f"使用疾驰随从[{name}[第二次攻击敌方玩家")
                             else:
                                 self.device_state.logger.info(f"使用疾驰随从[{name}]第{i+2}次攻击敌方玩家")
-                time.sleep(0.45)
+                time.sleep(0.4)
 
         # 第一次使用现成的 all_followers
         yellow_followers = [(x, y, name) for x, y, t, name in all_followers if t == "yellow"]
-        while yellow_followers:
+        # self.device_state.logger.warning(f"should_check_shield:{should_check_shield}")
+        max_attack_count=7
+        now_count=0
+        while yellow_followers and should_check_shield and (now_count < max_attack_count):
+            now_count += 1
 
+            # 等待画面稳定
+            from src.utils.utils import wait_for_screen_stable
+            wait_for_screen_stable(self.device_state)
             # 每轮攻击前都扫描敌方随从
             enemy_screenshot = self.device_state.take_screenshot()
             if not enemy_screenshot:
@@ -173,33 +199,155 @@ class GameActions:
                 self.device_state.logger.info("未检测到敌方随从，结束攻击")
                 return 
         
-            # 从黄色突进随从中选一个（可加排序策略，这里简单选第一个）
-            x, y, name = yellow_followers[0]
-        
-            try:
-                # 找敌方血量最小的随从作为目标
-                min_hp_follower = min(enemy_followers, key=lambda x: int(x[3]) if x[3].isdigit() else 0)
-                enemy_x, enemy_y, _, _ = min_hp_follower
-        
-                if name:
-                    self.device_state.logger.info(f"使用突进随从[{name}]攻击敌方血量较小的随从")
+            # 智能选择黄色突进随从攻击敌方随从
+            best_yellow_follower = None
+            best_yellow_name = None
+            best_yellow_priority = 999  # 优先级：0=等于，1=大于，2=小于
+            best_yellow_hp = 0  # 记录最佳随从的血量，用于同攻击力下选择血量最高的
+            best_enemy_target = None
+            
+            # 在循环外扫描一次我方所有随从的攻击力和血量
+            our_followers_stats = self._scan_our_ATK_AND_HP(enemy_screenshot) # 使用之前的截图
+
+            # 为每个黄色随从计算最佳攻击目标
+            for fx, fy, fname in yellow_followers:
+                # 从扫描结果中找到最近的随从数据
+                closest_stat = min(our_followers_stats, key=lambda stat: abs(stat[0] - fx)) if our_followers_stats else None
+                if closest_stat:
+                    follower_attack = int(closest_stat[2]) if str(closest_stat[2]).isdigit() else 1
+                    follower_hp = int(closest_stat[3]) if str(closest_stat[3]).isdigit() else 1
                 else:
-                    self.device_state.logger.info("使用突进随从攻击敌方血量较小的随从")
-        
+                    # 如果在our_followers_stats中找不到，则使用默认值
+                    follower_attack = get_follower_attack(fname) if fname else 1
+                    follower_hp = get_follower_hp(fname) if fname else 1
+                
+                # 为每个敌方随从计算优先级
+                for enemy_x, enemy_y, _, enemy_hp_value in enemy_followers:
+                    try:
+                        enemy_hp = int(enemy_hp_value) if enemy_hp_value.isdigit() else 1
+                    except:
+                        enemy_hp = 1
+                    
+                    # 计算优先级
+                    if follower_attack == enemy_hp:
+                        priority = 0  # 等于敌方血量，最高优先级
+                    elif follower_attack > enemy_hp:
+                        priority = 1  # 大于敌方血量，中等优先级
+                    else:
+                        priority = 2  # 小于敌方血量，最低优先级
+                    
+                    # 选择逻辑：优先级更好，或者优先级相同但攻击力更高，或者优先级和攻击力都相同但血量更高
+                    should_select = False
+                    if priority < best_yellow_priority:
+                        should_select = True
+                    elif priority == best_yellow_priority:
+                        if follower_attack > get_follower_attack(best_yellow_name) if best_yellow_name else 1:
+                            should_select = True
+                        elif follower_attack == get_follower_attack(best_yellow_name) if best_yellow_name else 1:
+                            if follower_hp > best_yellow_hp:
+                                should_select = True
+                    
+                    if should_select:
+                        best_yellow_follower = (fx, fy)
+                        best_yellow_name = fname
+                        best_yellow_priority = priority
+                        best_yellow_hp = follower_hp
+                        best_enemy_target = (enemy_x, enemy_y, enemy_hp)
+            
+            if best_yellow_follower and best_enemy_target:
+                enemy_x, enemy_y, enemy_hp = best_enemy_target
+                
+                # 根据优先级添加不同的日志信息
+                if best_yellow_priority == 0:
+                    priority_desc = "完美匹配"
+                elif best_yellow_priority == 1:
+                    priority_desc = "过度攻击"
+                else:
+                    priority_desc = "攻击不足"
+                
+                if best_yellow_name:
+                    # 从扫描结果中找到最近的随从数据
+                    closest_stat = min(our_followers_stats, key=lambda stat: abs(stat[0] - best_yellow_follower[0])) if our_followers_stats else None
+                    if closest_stat:
+                        follower_attack = int(closest_stat[2]) if str(closest_stat[2]).isdigit() else 1
+                    else:
+                        # 如果在our_followers_stats中找不到，则使用默认值
+                        follower_attack = get_follower_attack(best_yellow_name) if best_yellow_name else 1
+                    self.device_state.logger.info(f"使用突进随从[{best_yellow_name}](攻击力:{follower_attack})攻击敌方随从(血量:{enemy_hp}) - {priority_desc}")
+                else:
+                    self.device_state.logger.info(f"使用突进随从攻击敌方随从,第{now_count}/{max_attack_count}次")
+                
                 human_like_drag(
                     self.device_state.u2_device,
-                    x, y,
+                    best_yellow_follower[0], best_yellow_follower[1],
                     enemy_x, enemy_y,
                     duration=random.uniform(*settings.get_human_like_drag_duration_range())
                 )
                 # 等待画面稳定
                 from src.utils.utils import wait_for_screen_stable
                 wait_for_screen_stable(self.device_state)
-
-        
-            except Exception as e:
-                self.device_state.logger.warning(f"突进敌方最小血量随从失败: {str(e)}")
-                return
+            else:
+                # 如果没有找到合适的攻击目标，检查是否所有随从攻击力都小于敌方血量
+                # 如果是，则按攻击力降序使用随从攻击血量最高的敌方随从
+                if yellow_followers and enemy_followers:
+                    # 找出血量最高的敌方随从
+                    try:
+                        max_hp_enemy = max(enemy_followers, key=lambda x: int(x[3]) if x[3].isdigit() else 0)
+                        enemy_x, enemy_y, _, max_hp_value = max_hp_enemy
+                        max_hp = int(max_hp_value) if max_hp_value.isdigit() else 1
+                    except Exception as e:
+                        self.device_state.logger.warning(f"敌方随从血量转换失败: {e}")
+                        max_hp_enemy = enemy_followers[0]
+                        enemy_x, enemy_y, _, max_hp_value = max_hp_enemy
+                        max_hp = 1
+                    
+                    # 检查是否所有黄色随从攻击力都小于最高血量
+                    all_attack_less = True
+                    for fx, fy, fname in yellow_followers:
+                        if fname:
+                            follower_attack = get_follower_attack(fname)
+                        else:
+                            follower_attack = 1
+                        if follower_attack >= max_hp:
+                            all_attack_less = False
+                            break
+                    
+                    if all_attack_less:
+                        # 按攻击力降序排序黄色随从
+                        yellow_followers_with_attack = []
+                        for fx, fy, fname in yellow_followers:
+                            if fname:
+                                follower_attack = get_follower_attack(fname)
+                            else:
+                                follower_attack = 1
+                            yellow_followers_with_attack.append((fx, fy, fname, follower_attack))
+                        
+                        # 按攻击力降序排序
+                        yellow_followers_with_attack.sort(key=lambda x: x[3], reverse=True)
+                        
+                        # 使用攻击力最高的随从攻击血量最高的敌方随从
+                        best_fx, best_fy, best_fname, best_attack = yellow_followers_with_attack[0]
+                        
+                        if best_fname:
+                            self.device_state.logger.info(f"使用[{best_fname}]攻击敌方随从(血量:{max_hp}),第{now_count}/{max_attack_count}次")
+                        else:
+                            self.device_state.logger.info(f"使用随从攻击敌方随从(血量:{max_hp}),第{now_count}/{max_attack_count}次")
+                        
+                        human_like_drag(
+                            self.device_state.u2_device,
+                            best_fx, best_fy,
+                            enemy_x, enemy_y,
+                            duration=random.uniform(*settings.get_human_like_drag_duration_range())
+                        )
+                        # 等待画面稳定
+                        from src.utils.utils import wait_for_screen_stable
+                        wait_for_screen_stable(self.device_state)
+                    else:
+                        self.device_state.logger.info("没有合适的突进随从攻击敌方随从")
+                        break
+                else:
+                    self.device_state.logger.info("没有合适的突进随从攻击敌方随从")
+                    break
         
             # 攻击后重新扫描我方随从
             our_screenshot = self.device_state.take_screenshot()
@@ -209,10 +357,10 @@ class GameActions:
         
             all_followers = self._scan_our_followers(our_screenshot)
             yellow_followers = [(x, y, name) for x, y, t, name in all_followers if t == "yellow"]
-        
 
         
     def perform_evolution_actions(self):
+        from src.utils.utils import wait_for_screen_stable
         """执行进化/超进化操作"""
         all_followers = self.follower_manager.get_positions()
         if not all_followers:
@@ -250,6 +398,9 @@ class GameActions:
         sorted_followers = sorted_evolve_priority + sorted_others
         # 提取位置坐标
         positions = [pos[:2] for pos in sorted_followers]
+
+        #先取一个无遮挡的截图用于传递给进化超进化特殊操作函数
+        clear_screenshot = self.device_state.take_screenshot()
 
         # 遍历每个随从位置
         for pos in positions:
@@ -293,16 +444,16 @@ class GameActions:
                         self.device_state.logger.info(f"超进化了[{follower_name}]，剩余超进化次数：{self.device_state.super_evolution_point}")
                     else:
                         self.device_state.logger.info(f"检测到超进化按钮并点击，剩余超进化次数：{self.device_state.super_evolution_point}")
-                    time.sleep(4.5)
+                    # 等待画面稳定
+                    wait_for_screen_stable(self.device_state)
 
-                    # 特殊超进化后操作（如铁拳神父）
+                    # 超进化后的特殊操作（如铁拳神父）
                     if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=True, existing_followers=all_followers)
+                        self._handle_evolve_special_action( clear_screenshot, follower_name, pos, is_super_evolution=True, existing_followers=all_followers)
+                        # 等待画面稳定
+                        wait_for_screen_stable(self.device_state)
                     # 如果超进化到突进或者普通随从，则再检查无护盾后攻击敌方随从
                     if follower_type in ["yellow", "normal"]:
-                        # 等待画面稳定
-                        from src.utils.utils import wait_for_screen_stable
-                        wait_for_screen_stable(self.device_state)
                         # 检查敌方护盾
                         shield_targets = self._scan_shield_targets()
                         shield_detected = bool(shield_targets)
@@ -327,7 +478,7 @@ class GameActions:
                                     enemy_x, enemy_y, _, hp_value = max_hp_follower
                                     # 使用原来的随从位置作为起始点
                                     human_like_drag(self.device_state.u2_device, pos[0], pos[1], enemy_x, enemy_y, duration=random.uniform(*settings.get_human_like_drag_duration_range()))
-                                    time.sleep(1)
+                                    time.sleep(0.4)
                                     if follower_name:
                                         self.device_state.logger.info(f"超进化了[{follower_name}]并攻击了敌方较高血量随从")
                                     else:
@@ -348,16 +499,14 @@ class GameActions:
                         self.device_state.logger.info(f"进化了[{follower_name}]，剩余进化次数：{self.device_state.evolution_point}")
                     else:
                         self.device_state.logger.info(f"执行了进化，剩余进化次数：{self.device_state.evolution_point}")
-                    time.sleep(4.5)
-
                     # 特殊进化后操作（如铁拳神父）
                     if follower_name and is_evolve_special_action_card(follower_name):
-                        self._handle_evolve_special_action(follower_name, pos, is_super_evolution=False, existing_followers=all_followers)
+                        self._handle_evolve_special_action( clear_screenshot, follower_name, pos, is_super_evolution=False, existing_followers=all_followers)
                 break
             time.sleep(0.01)
 
 
-    def _handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False, existing_followers=None):
+    def _handle_evolve_special_action(self, screenshot, follower_name, pos=None,is_super_evolution=False, existing_followers=None):
         """
         处理进化/超进化后特殊action（如铁拳神父等），便于扩展
         follower_name: 卡牌名称
@@ -367,7 +516,7 @@ class GameActions:
         """
         from .evolution_special_actions import EvolutionSpecialActions
         evolution_actions = EvolutionSpecialActions(self.device_state)
-        evolution_actions.handle_evolve_special_action(follower_name, pos, is_super_evolution, existing_followers)
+        evolution_actions.handle_evolve_special_action(screenshot ,follower_name, pos, is_super_evolution, existing_followers)
 
     def perform_full_actions(self):
         """720P分辨率下的出牌攻击操作"""
@@ -375,8 +524,14 @@ class GameActions:
         # 并发调用scan_enemy_ATK
         with ThreadPoolExecutor(max_workers=3) as executor:
             enemy_future = executor.submit(self._scan_enemy_ATK, self.device_state.take_screenshot())
+
+        #点击空白处收牌
+        time.sleep(0.1)
+        self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
+
         
         # 展牌一次
+        time.sleep(0.1)
         self.device_state.u2_device.click(
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
@@ -384,7 +539,7 @@ class GameActions:
         
         #移除手牌光标提高识别率
         self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-        time.sleep(0.2)
+        time.sleep(0.5)
         
         # 获取截图
         screenshot = self.device_state.take_screenshot()
@@ -436,13 +591,19 @@ class GameActions:
         # 并发调用scan_enemy_ATK
         with ThreadPoolExecutor(max_workers=3) as executor:
             enemy_future = executor.submit(self._scan_enemy_ATK, self.device_state.take_screenshot())
+        #点击空白处收牌
+        time.sleep(0.1)
+        self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
 
         # 展牌
+        time.sleep(0.1)
         self.device_state.u2_device.click(
             SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
             SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
         )
+        time.sleep(0.1)
         self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
+        time.sleep(0.5)
         
 
         # 获取截图
@@ -555,8 +716,8 @@ class GameActions:
         
         # 检测手牌中是否有shield随从，如果有则跳过出牌阶段
         # if self.hand_manager.recognize_hand_shield_card():
-        #     self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
-        #     return
+            # self.device_state.logger.warning("检测到护盾卡牌，跳过出牌阶段")
+            # return
         
         # 第一回合检查是否有额外费用点
         if current_round == 1 and self.device_state.extra_cost_available_this_match is None:
@@ -759,7 +920,10 @@ class GameActions:
             
             planned_cards.remove(card_to_play)
             if planned_cards and (remain_cost > 0 or any(c.get('cost', 0) == 0 for c in planned_cards)):
-                time.sleep(0.2)
+                #点击空白处收牌
+                time.sleep(0.1)
+                self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
+                time.sleep(0.1)
                 #点击展牌位置
                 self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
                 time.sleep(0.2)
@@ -816,8 +980,11 @@ class GameActions:
     def _extra_scan_after_add_newcards(self, hand_manager, high_priority_cards_cfg,last_played_card):
         """用完费用后的额外扫描逻辑"""
         self.device_state.logger.info(f"检测到打出{last_played_card}用完费用，额外扫描一次手牌")
-        time.sleep(0.2)
+        #点击空白处收牌
+        time.sleep(0.1)
+        self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
         # 点击展牌位置
+        time.sleep(0.1)
         self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
         time.sleep(0.2)
         #移除手牌光标提高识别率
@@ -860,10 +1027,14 @@ class GameActions:
             else:
                 self.device_state.logger.info("额外扫描未发现0费卡牌，进行第二次扫描")
                 # 第二次扫描
-                time.sleep(0.5)
+                time.sleep(0.3)
+                #点击空白处收牌
+                time.sleep(0.1)
+                self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
+                time.sleep(0.1)
                 # 再次点击展牌位置
                 self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
-                time.sleep(0.2)
+                time.sleep(0.1)
                 #移除手牌光标提高识别率
                 self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
                 time.sleep(1)
@@ -907,8 +1078,12 @@ class GameActions:
                     self.device_state.logger.info("第二次额外扫描仍未检测到手牌")
         else:
             self.device_state.logger.info("额外扫描未检测到手牌，进行第二次扫描")
+            
             # 第二次扫描
-            time.sleep(0.2)
+            time.sleep(0.1)
+            #点击空白处收牌
+            self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
+            time.sleep(0.1)
             # 再次点击展牌位置
             self.device_state.u2_device.click(SHOW_CARDS_BUTTON[0] + random.randint(-2,2), SHOW_CARDS_BUTTON[1] + random.randint(-2,2))
             time.sleep(0.2)
@@ -1337,6 +1512,12 @@ class GameActions:
         """检测场上的我方随从位置和状态"""
         if hasattr(self.device_state, 'game_manager') and self.device_state.game_manager:
             return self.device_state.game_manager.scan_our_followers(screenshot)
+        return []
+
+    def _scan_our_ATK_AND_HP(self, screenshot):
+        """检测场上的我方随从攻击力与血量"""
+        if hasattr(self.device_state, 'game_manager') and self.device_state.game_manager:
+            return self.device_state.game_manager.scan_our_ATK_AND_HP(screenshot)
         return []
 
     def _scan_shield_targets(self):

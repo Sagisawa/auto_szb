@@ -26,7 +26,7 @@ SPECIAL_CARDS = {
         "target_type": "shield_or_highest_hp"  # 目标类型：护盾或最高血量
     },
     "触手撕咬": {
-        "target_type": "enemy_player"  # 目标类型：敌方玩家
+        "target_type": "enemy_player_if_have_shield_return"  # 目标类型：敌方玩家，敌方有护盾则不出，直接返回恢复能量点
     },
     "沉默的狙击手瓦路兹": {
         "target_type": "enemy_followers_hp_less_than_6"  # 目标类型：敌方随从血量小于6
@@ -66,8 +66,13 @@ class CardPlaySpecialActions:
             special_info = special_cards[card_name]
             target_type = special_info.get('target_type', '')
             
-            if target_type == 'enemy_player':
-                self._handle_enemy_player_target(card_name, center_x, center_y, target_x)
+            if target_type == 'enemy_player_if_have_shield_return':
+                result=self._enemy_player_if_have_shield_return(card_name, center_x, center_y, target_x)
+                if result is False:
+                    # 特殊处理：不消耗费用，且需要从手牌中移除
+                    self._should_not_consume_cost = True
+                    self._should_remove_from_hand = True
+                    return False
             elif target_type == 'shield_or_highest_hp':
                 self._handle_shield_or_highest_hp_target(card_name, center_x, center_y, target_x)
             elif target_type == 'enemy_followers_hp_less_than_6':
@@ -90,23 +95,29 @@ class CardPlaySpecialActions:
         
         # 特殊费用处理：勇武的堕天使奥莉薇打出后增加2点费用
         if card_name == "勇武的堕天使奥莉薇":
-            time.sleep(5)
+            # 等待画面稳定
+            from src.utils.utils import wait_for_screen_stable
+            wait_for_screen_stable(self.device_state)
             self.device_state.logger.info(f"检测到打出{card_name}，增加2点费用")
             # 这里需要在调用方处理费用增加，我们通过返回值来通知
             self._extra_cost_bonus = 2
         elif card_name == "白银骑士团团长艾蜜莉亚":
-            time.sleep(5)
+            # 等待画面稳定
+            from src.utils.utils import wait_for_screen_stable
+            wait_for_screen_stable(self.device_state)
             self.device_state.logger.info(f"检测到打出{card_name}，增加3点费用")
             # 这里需要在调用方处理费用增加，我们通过返回值来通知
             self._extra_cost_bonus = 3
         else:
             self._extra_cost_bonus = 0
         
-        # 如果是高优先级卡牌，多等一会
+        # 如果是高优先级卡牌（一般特效多），等待画面稳定
         if card_name in high_priority_names:
-            time.sleep(1)
+            # 等待画面稳定
+            from src.utils.utils import wait_for_screen_stable
+            wait_for_screen_stable(self.device_state)
         
-        time.sleep(0.5)
+        time.sleep(0.1)
         return True
     
     def _should_consume_cost(self, card_name):
@@ -124,13 +135,50 @@ class CardPlaySpecialActions:
         
         # 普通卡牌应该消耗费用
         return True
+
+    def _enemy_player_if_have_shield_return(self, card_name, center_x, center_y, target_x):
+        """选择敌方玩家目标,有护盾则不出"""
+        # 检测护盾
+        shield_targets = self._scan_shield_targets()
+        shield_detected = bool(shield_targets)
+        
+        if shield_detected:
+            self.device_state.logger.info("检测到敌方有护盾随从，当前回合跳过触手撕咬，不消耗能量点")
+            # 不划出卡牌，不消耗能量点
+            return False
+        else:
+            self.device_state.logger.info(f"检测到{card_name}，划出卡牌后选择敌方玩家目标")
+            # 划出卡牌
+            human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
+            time.sleep(0.1)  # 等待
+        
+        enemy_x = DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+        enemy_y = DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
+        self.device_state.u2_device.click(enemy_x, enemy_y)
+        self.device_state.logger.info(f"{card_name}选择敌方玩家目标: ({enemy_x}, {enemy_y})")
+        time.sleep(0.1)  # 等待0.1秒
     
     def _handle_enemy_player_target(self, card_name, center_x, center_y, target_x):
-        """处理选择敌方玩家目标"""
-        self.device_state.logger.info(f"检测到{card_name}，划出卡牌后选择敌方玩家目标")
-        # 划出卡牌
-        human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
-        time.sleep(0.7)  # 等待
+        """处理优先破坏护盾，，否则选择敌方玩家目标"""
+        # 检测护盾
+        shield_targets = self._scan_shield_targets()
+        shield_detected = bool(shield_targets)
+        
+        if shield_detected:
+            self.device_state.logger.info(f"检测到护盾，划出{card_name}后破坏护盾随从")
+            # 划出卡牌
+            human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
+            time.sleep(0.3)  # 等待
+            
+            # 点击护盾随从（选择第一个护盾）
+            shield_x, shield_y = shield_targets[0]
+            self.device_state.u2_device.click(shield_x, shield_y)
+            self.device_state.logger.info(f"点击护盾随从位置: ({shield_x}, {shield_y})")
+        else:
+            self.device_state.logger.info(f"检测到{card_name}，划出卡牌后选择敌方玩家目标")
+            # 划出卡牌
+            human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
+            time.sleep(0.1)  # 等待
         
         enemy_x = DEFAULT_ATTACK_TARGET[0] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
         enemy_y = DEFAULT_ATTACK_TARGET[1] + random.randint(-DEFAULT_ATTACK_RANDOM, DEFAULT_ATTACK_RANDOM)
@@ -149,7 +197,7 @@ class CardPlaySpecialActions:
             self.device_state.logger.info("检测到护盾，划出卡牌后破坏护盾随从")
             # 划出卡牌
             human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
-            time.sleep(0.5)  # 等待
+            time.sleep(0.3)  # 等待
             
             # 点击护盾随从（选择第一个护盾）
             shield_x, shield_y = shield_targets[0]
@@ -157,12 +205,13 @@ class CardPlaySpecialActions:
             self.device_state.logger.info(f"点击护盾随从位置: ({shield_x}, {shield_y})")
         else:
             self.device_state.logger.info("未检测到护盾，尝试检测血量最高的敌方随从")
-            # 划出卡牌
-            human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
-            time.sleep(0.2)  # 等待0.2秒
-            
+
             # 检测敌方随从
             screenshot = self.device_state.take_screenshot()
+            time.sleep(0.1)  # 等待0.1秒
+            # 划出卡牌
+            human_like_drag(self.device_state.u2_device, center_x, center_y, target_x, 400)
+            time.sleep(0.1)  # 等待0.1秒
             if screenshot:
                 enemy_followers = self._scan_enemy_followers(screenshot)
                 if enemy_followers:

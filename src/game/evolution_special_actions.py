@@ -40,7 +40,7 @@ class EvolutionSpecialActions:
     def __init__(self, device_state):
         self.device_state = device_state
     
-    def handle_evolve_special_action(self, follower_name, pos=None, is_super_evolution=False, existing_followers=None):
+    def handle_evolve_special_action(self, screenshot,follower_name, pos=None, is_super_evolution=False, existing_followers=None):
         """
         处理进化/超进化后特殊action（如铁拳神父等），便于扩展
         follower_name: 卡牌名称
@@ -54,24 +54,23 @@ class EvolutionSpecialActions:
             # 超进化逻辑
             action = special_actions.get(follower_name, {}).get('super_evolution_action', None)
             if action == 'attack_two_enemy_followers_hp_less_than_4':
-                self._handle_attack_two_enemy_followers_hp_less_than_4(follower_name, is_super_evolution=True)
+                self._handle_attack_two_enemy_followers_hp_less_than_4(screenshot,follower_name, is_super_evolution=True)
             elif action == 'attack_two_enemy_followers_hp_highest':
-                self._handle_attack_two_enemy_followers_hp_highest(follower_name, is_super_evolution=True)
+                self._handle_attack_two_enemy_followers_hp_highest(screenshot,follower_name, is_super_evolution=True)
             elif action == 'our_followers_with_evolution':
-                self._handle_our_followers_with_evolution(follower_name, is_super_evolution=True, existing_followers=existing_followers)
+                self._handle_our_followers_with_evolution(screenshot,follower_name, is_super_evolution=True, existing_followers=existing_followers)
         else:
             # 普通进化逻辑
             action = special_actions.get(follower_name, {}).get('action', None)
             if action == 'attack_enemy_follower_hp_less_than_4':
-                self._handle_attack_enemy_follower_hp_less_than_4(follower_name)
+                self._handle_attack_enemy_follower_hp_less_than_4( screenshot,follower_name)
             elif action == 'attack_two_enemy_followers_hp_highest':
-                self._handle_attack_two_enemy_followers_hp_highest(follower_name)
+                self._handle_attack_two_enemy_followers_hp_highest( screenshot,follower_name)
         # 以后可扩展更多action
     
-    def _handle_attack_two_enemy_followers_hp_less_than_4(self, follower_name, is_super_evolution=False):
+    def _handle_attack_two_enemy_followers_hp_less_than_4(self, screenshot, follower_name, is_super_evolution=False):
         """处理攻击两个HP<=3的敌方随从"""
         evolution_type = "超进化" if is_super_evolution else "进化"
-        screenshot = self.device_state.take_screenshot()
         if screenshot:
             enemy_followers = self._scan_enemy_followers(screenshot)
             # 只保留HP为数字且<=3的随从
@@ -88,10 +87,9 @@ class EvolutionSpecialActions:
             else:
                 self.device_state.logger.info(f"[{follower_name}]{evolution_type}后未找到HP<=3随从")
     
-    def _handle_attack_two_enemy_followers_hp_highest(self, follower_name, is_super_evolution=False):
+    def _handle_attack_two_enemy_followers_hp_highest(self, screenshot, follower_name, is_super_evolution=False):
         """处理攻击血量最高的敌方随从"""
         evolution_type = "超进化" if is_super_evolution else "进化"
-        screenshot = self.device_state.take_screenshot()
         if screenshot:
             enemy_followers = self._scan_enemy_followers(screenshot)
             # 只保留HP为数字的随从
@@ -105,7 +103,7 @@ class EvolutionSpecialActions:
             else:
                 self.device_state.logger.info(f"[{follower_name}]{evolution_type}后未找到有效敌方随从")
     
-    def _handle_our_followers_with_evolution(self, follower_name, is_super_evolution=False, existing_followers=None):
+    def _handle_our_followers_with_evolution(self, screenshot, follower_name, is_super_evolution=False, existing_followers=None):
         """选择随从进行/超进化"""
         evolution_type = "超进化" if is_super_evolution else "进化"
         
@@ -114,7 +112,6 @@ class EvolutionSpecialActions:
             our_followers = existing_followers
             self.device_state.logger.debug(f"[{follower_name}]{evolution_type}后使用已扫描的随从结果，避免重复扫描")
         else:
-            screenshot = self.device_state.take_screenshot()
             if screenshot:
                 # 获取我方随从位置和名字（scan_our_followers已经包含了SIFT识别结果）
                 our_followers = self._scan_our_followers(screenshot)
@@ -176,9 +173,8 @@ class EvolutionSpecialActions:
             self.device_state.logger.info(f"[{follower_name}]{evolution_type}后未检测到我方随从")
         time.sleep(1)
     
-    def _handle_attack_enemy_follower_hp_less_than_4(self, follower_name):
+    def _handle_attack_enemy_follower_hp_less_than_4(self, screenshot, follower_name):
         """处理攻击HP<=3的敌方随从"""
-        screenshot = self.device_state.take_screenshot()
         if screenshot:
             enemy_followers = self._scan_enemy_followers(screenshot)
             # 只保留HP为数字且<=3的随从

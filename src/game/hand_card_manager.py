@@ -142,6 +142,10 @@ class HandCardManager:
                     # 未识别到手牌时，点击展牌按钮再重试
                     from src.config.game_constants import SHOW_CARDS_BUTTON, SHOW_CARDS_RANDOM_X, SHOW_CARDS_RANDOM_Y
                     import random, time
+                    #点击空白处收牌
+                    time.sleep(0.1)
+                    self.device_state.u2_device.click(33 + random.randint(-2,2), 566 + random.randint(-2,2))
+                    time.sleep(0.1)
                     self.device_state.u2_device.click(
                         SHOW_CARDS_BUTTON[0] + random.randint(SHOW_CARDS_RANDOM_X[0], SHOW_CARDS_RANDOM_X[1]),
                         SHOW_CARDS_BUTTON[1] + random.randint(SHOW_CARDS_RANDOM_Y[0], SHOW_CARDS_RANDOM_Y[1])
@@ -150,14 +154,14 @@ class HandCardManager:
                     #移除手牌光标提高识别率
                     from src.config.game_constants import DEFAULT_ATTACK_TARGET
                     self.device_state.u2_device.click(DEFAULT_ATTACK_TARGET[0] + random.randint(-2,2), DEFAULT_ATTACK_TARGET[1] + random.randint(-2,2))
-                    time.sleep(1.2)
+                    time.sleep(0.2)
             
             except Exception as e:
                 logger.error(f"第{attempt + 1}次手牌识别尝试出错: {str(e)}")
             
             # 等待一段时间后重试
             if attempt < max_retries - 1:
-                time.sleep(1)
+                time.sleep(0.5)
         
         if not silent:
             logger.warning(f"经过{max_retries}次尝试仍未识别到手牌")
